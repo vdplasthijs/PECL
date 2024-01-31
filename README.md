@@ -1,2 +1,2 @@
-# CLOPES
-Contrastive learning of paired embedding spaces
+# PECL
+Paired embeddings contrastive learning
