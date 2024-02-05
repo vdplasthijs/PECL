@@ -7,6 +7,7 @@
   "t.vanderplas": 
     {"paths": {
       "home": "/Users/t.vanderplas/",
+      "repo": "/Users/t.vanderplas/repos/PECL/",
       "ukbms_full_dataset": "/Users/t.vanderplas/data/gbif/0047997-231120084113126.zip"
               }
     }

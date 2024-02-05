@@ -8,26 +8,36 @@ import matplotlib.pyplot as plt
 import seaborn as sns 
 import shapely 
 from shapely.geometry import Point, Polygon
+import datetime
 # import warnings
 # from shapely.errors import ShapelyDeprecationWarning
 # warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning) 
 import geopandas as gpd
 # import h3pandas 
-sys.path.append('../reproducible_figures/scripts/')
-import rep_fig_vis as rfv
 from tqdm import tqdm
-import loadpaths_pecl
 import scipy 
 from matplotlib.colors import ListedColormap
 import scipy.spatial
 import scipy.cluster
+import json
 
-sys.path.append('../../../cnn-land-cover/scripts/')
+import loadpaths_pecl
+path_dict_pecl = loadpaths_pecl.loadpaths()
+
+sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/cnn-land-cover/scripts/'))
 import land_cover_analysis as lca 
 import land_cover_visualisation as lcv
 import land_cover_models as lcm 
+import ee, geemap 
+sys.path.append(os.path.join(path_dict_pecl['repo'], 'content/'))
+import api_keys
+sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
+import rep_fig_vis as rfv
 
-path_dict_pecl = loadpaths_pecl.loadpaths()
+ee.Authenticate()
+ee.Initialize(project=api_keys.GEE_API)
+geemap.ee_initialize()
+
 
 def load_df_gbif(path_gbif_ds=None, verbose=1):
     if path_gbif_ds is None:
@@ -40,6 +50,73 @@ def load_df_gbif(path_gbif_ds=None, verbose=1):
     if verbose:
         print('Loaded GBIF dataset with {} records'.format(len(df)))
     return df
+
+def create_names_unique_locs(df, 
+                             save_json=False, path_save=None):
+    df['tuple_coords'] = [(x, y) for x, y in zip(df.decimalLongitude, df.decimalLatitude)]
+    df_unique_pairs = df[['tuple_coords', 'footprintWKT']].value_counts().reset_index(name='count')
+    ## drop duplicates:
+    df_unique_pairs.drop_duplicates(subset=['tuple_coords'], inplace=True, keep=False)
+    df_unique_pairs.drop_duplicates(subset=['footprintWKT'], inplace=True, keep=False)
+    df_unique_pairs['polygon'] = [shapely.wkt.loads(wkt) for wkt in df_unique_pairs.footprintWKT]
+    n_digits_unique = len(str(len(df_unique_pairs)))
+    df_unique_pairs['name_loc'] = [f'UKBMS_loc-{str(i).zfill(n_digits_unique)}' for i in range(len(df_unique_pairs))]
+
+    if save_json:
+        if path_save is None:
+            path_save = os.path.join(path_dict_pecl['repo'], 'content/df_mapping_locs.json')
+        df_unique_pairs.to_json(path_save)
+    return df_unique_pairs
+    
+    #####
+    # unique_vals = df['tuple_coords'].unique()
+    # n_digits_unique = len(str(len(unique_vals)))
+    # dict_mapping = {f'UKBMS_loc_{str(i).zfill(n_digits_unique)}': val for i, val in enumerate(unique_vals)}
+
+    #######
+    # list_names = list(dict_mapping.keys())
+    # list_coords = list(dict_mapping.values())
+    # list_polygons = [set() for _ in range(len(list_names))]
+    
+    # for i_tc, tc in tqdm(enumerate(list_coords)):
+    #     tmp_df = df[df.tuple_coords == tc]
+    #     list_polygons[i_tc] = set(tmp_df.footprintWKT)
+
+    ########
+    # dict_mapping = {'name_loc': [], 'tuple_coords': [], 'polygon': []}
+
+    # list_tuple_coords, list_footprints = [], []
+    # i_addition = 0
+    # for i_row in tqdm(range(len(df))):
+    #     row = df.iloc[i_row]
+    #     if row.tuple_coords in list_tuple_coords:
+    #         ind_tc = list_tuple_coords.index(row.tuple_coords)
+    #         assert list_footprints[ind_tc] == row.footprintWKT, (list_footprints[ind_tc], row.footprintWKT)
+    #     else:
+    #         list_tuple_coords.append(row.tuple_coords)
+    #         assert row.footprintWKT not in list_footprints, row.footprintWKT
+    #         list_footprints.append(row.footprintWKT)
+
+    #         dict_mapping['name_loc'].append(f'UKBMS_loc_{str(i_addition)}')
+    #         dict_mapping['tuple_coords'].append(row.tuple_coords)
+    #         dict_mapping['polygon'].append(row.footprintWKT)
+
+    #         i_addition += 1
+
+    # n_digits = len(str(len(dict_mapping['name_loc'])))
+    # dict_mapping['name_loc'] = [x.zfill(n_digits) for x in dict_mapping['name_loc']]
+
+    # df_mapping = pd.DataFrame(dict_mapping)
+    ########
+
+    if save_json:
+        if path_save is None:
+            path_save = os.path.join(path_dict_pecl['repo'], 'content/dict_mapping_locs.json')
+        with open(path_save, 'w') as f:
+            json.dump(dict_mapping, f)
+    #     df_mapping.to_json(path_save)
+    # return df_mapping
+    return dict_mapping
 
 def count_rows_per_unique_val(df, col_interest='footprintWKT'):
     # unique_vals = df[col_interest].unique()
@@ -245,3 +322,101 @@ def plot_clusters_species_per_loc(df_summary, species_list, threshold_clusters=2
 
     gdf_per_loc.plot(markersize=6, ax=ax[2], legend=True, 
                      column='cluster', cmap='magma', categorical=True)
+
+def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0, 
+                  year=None, month_start_str='06', month_end_str='09'):
+    assert type(df_mapping_locs_row) == pd.Series, type(df_mapping_locs_row)
+    if year is None:
+        year = 2020
+    if use_point:
+        assert False, 'not correctly implemented yet. CRS needs to be taken into account such that buffer is in meters, not degrees.'
+        print('using point')
+        assert 'tuple_coords' in df_mapping_locs_row.index, df_mapping_locs_row.index
+        # point = ee.Geometry.Point(row.tuple_coords)
+        point = shapely.geometry.Point(df_mapping_locs_row.tuple_coords)
+        polygon = point.buffer(0.01, cap_style=3)  ## buffer in degrees
+        xy_coords = np.array(polygon.exterior.coords.xy).T 
+        aoi = ee.Geometry.Polygon(xy_coords.tolist())
+    else:
+        col_polygon = 'polygon'
+        assert col_polygon in df_mapping_locs_row.index and 'tuple_coords' in df_mapping_locs_row.index, df_mapping_locs_row.index
+        '''buffer around polygon, because (of CRS I think) the saved tif can be rotated slightly and therefore outside pixels are blank. 
+        Create larger buffer and then in download_gee_image() it is loaded, indexed and re-saved to the correct size.'''
+        buffer_dist = 1000
+        xy_coords = np.array(df_mapping_locs_row[col_polygon].exterior.coords.xy).T 
+        aoi = ee.Geometry.Polygon(xy_coords.tolist())
+        aoi = aoi.buffer(buffer_dist).bounds()
+
+    ex_collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+
+    ex_im_gee = ee.Image(ex_collection 
+                        #   .project(crs='EPSG:27700', scale=1)
+                        .filterBounds(aoi) 
+                        .filterDate(ee.Date(f'{year}-{month_start_str}-01'), ee.Date(f'{year}-{month_end_str}-01')) 
+                        .select(['B4', 'B3', 'B2', 'B8'])  # 10m bands, RGB and NIR
+                        .sort('CLOUDY_PIXEL_PERCENTAGE')
+                        .first()  # get the least cloudy image
+                        .clip(aoi))
+    
+    im_dims = ex_im_gee.getInfo()["bands"][0]["dimensions"]
+    
+    if im_dims[0] < 256 or im_dims[1] < 256:
+        print('WARNING: image too small, returning None')
+        return None
+    
+    if verbose:
+        print(ex_im_gee.projection().getInfo())
+        # print(f'Area AOI in km2: {aoi.area().getInfo() / 1e6}')
+        print(f'Pixel dimensions: {im_dims}')
+        print(ex_im_gee.getInfo()['bands'][3])
+    
+    return ex_im_gee
+
+def download_gee_image(df_mapping_locs_row, use_point=False, 
+                        month_start_str='06', month_end_str='09',
+                       year=None, path_save=None, 
+                       remove_if_too_small=True, verbose=0):
+    if year is None:
+        year = 2020
+    im_gee = get_gee_image(df_mapping_locs_row=df_mapping_locs_row, 
+                           month_start_str=month_start_str, month_end_str=month_end_str,
+                           use_point=use_point, verbose=verbose, year=year)
+    if im_gee is None:  ## if image was too small it was discarded
+        return None, None
+
+    name_loc = df_mapping_locs_row.name_loc
+
+    if path_save is None:
+        path_save = f'/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/{year}/m-{month_start_str}-{month_end_str}/'
+    if not os.path.exists(path_save):
+        os.makedirs(path_save)
+
+    filepath = os.path.join(path_save, f'sent2-4band_{name_loc}_y-{year}_m-{month_start_str}-{month_end_str}.tif')
+    geemap.ee_export_image(
+        im_gee, filename=filepath, 
+        scale=10,  # 10m bands
+        file_per_band=False,# crs='EPSG:32630'
+    )
+
+    ## load & save to size correctly (because of buffer): 
+    im = lca.load_tiff(filepath, datatype='da')
+    desired_pixel_size = 256
+    
+    if verbose:
+        print('Original size: ', im.shape)
+    if im.shape[1] < desired_pixel_size or im.shape[2] < desired_pixel_size:
+        print('WARNING: image too small, returning None')
+        if remove_if_too_small:
+            os.remove(filepath)
+        return None, None
+
+    ## crop:
+    padding_1 = (im.shape[1] - desired_pixel_size) // 2
+    padding_2 = (im.shape[2] - desired_pixel_size) // 2
+    im_crop = im[:, padding_1:desired_pixel_size + padding_1, padding_2:desired_pixel_size + padding_2]
+    assert im_crop.shape[0] == im.shape[0] and im_crop.shape[1] == desired_pixel_size and im_crop.shape[2] == desired_pixel_size, im_crop.shape
+    if verbose:
+        print('New size: ', im_crop.shape)
+    im_crop.rio.to_raster(filepath)
+
+    return im_crop, filepath
