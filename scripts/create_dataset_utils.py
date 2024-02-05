@@ -51,9 +51,13 @@ def load_df_gbif(path_gbif_ds=None, verbose=1):
         print('Loaded GBIF dataset with {} records'.format(len(df)))
     return df
 
+def add_tuple_coords(df):
+    df['tuple_coords'] = [(x, y) for x, y in zip(df.decimalLongitude, df.decimalLatitude)]
+    return df
+
 def create_names_unique_locs(df, 
                              save_json=False, path_save=None):
-    df['tuple_coords'] = [(x, y) for x, y in zip(df.decimalLongitude, df.decimalLatitude)]
+    df = add_tuple_coords(df)
     df_unique_pairs = df[['tuple_coords', 'footprintWKT']].value_counts().reset_index(name='count')
     ## drop duplicates:
     df_unique_pairs.drop_duplicates(subset=['tuple_coords'], inplace=True, keep=False)
@@ -68,56 +72,15 @@ def create_names_unique_locs(df,
         df_unique_pairs.to_json(path_save)
     return df_unique_pairs
     
-    #####
-    # unique_vals = df['tuple_coords'].unique()
-    # n_digits_unique = len(str(len(unique_vals)))
-    # dict_mapping = {f'UKBMS_loc_{str(i).zfill(n_digits_unique)}': val for i, val in enumerate(unique_vals)}
-
-    #######
-    # list_names = list(dict_mapping.keys())
-    # list_coords = list(dict_mapping.values())
-    # list_polygons = [set() for _ in range(len(list_names))]
+def load_names_unique_locs(df=None, path_json=None):
+    if df is not None:
+        df = add_tuple_coords(df)
+    if path_json is None:
+        path_json = os.path.join(path_dict_pecl['repo'], 'content/df_mapping_locs.json')
+    df_unique_pairs = pd.read_json(path_json)
+    df_unique_pairs['tuple_coords'] = df_unique_pairs.tuple_coords.apply(lambda x: (x[0], x[1]))  # convert to tuple from list s
+    return df_unique_pairs, df
     
-    # for i_tc, tc in tqdm(enumerate(list_coords)):
-    #     tmp_df = df[df.tuple_coords == tc]
-    #     list_polygons[i_tc] = set(tmp_df.footprintWKT)
-
-    ########
-    # dict_mapping = {'name_loc': [], 'tuple_coords': [], 'polygon': []}
-
-    # list_tuple_coords, list_footprints = [], []
-    # i_addition = 0
-    # for i_row in tqdm(range(len(df))):
-    #     row = df.iloc[i_row]
-    #     if row.tuple_coords in list_tuple_coords:
-    #         ind_tc = list_tuple_coords.index(row.tuple_coords)
-    #         assert list_footprints[ind_tc] == row.footprintWKT, (list_footprints[ind_tc], row.footprintWKT)
-    #     else:
-    #         list_tuple_coords.append(row.tuple_coords)
-    #         assert row.footprintWKT not in list_footprints, row.footprintWKT
-    #         list_footprints.append(row.footprintWKT)
-
-    #         dict_mapping['name_loc'].append(f'UKBMS_loc_{str(i_addition)}')
-    #         dict_mapping['tuple_coords'].append(row.tuple_coords)
-    #         dict_mapping['polygon'].append(row.footprintWKT)
-
-    #         i_addition += 1
-
-    # n_digits = len(str(len(dict_mapping['name_loc'])))
-    # dict_mapping['name_loc'] = [x.zfill(n_digits) for x in dict_mapping['name_loc']]
-
-    # df_mapping = pd.DataFrame(dict_mapping)
-    ########
-
-    if save_json:
-        if path_save is None:
-            path_save = os.path.join(path_dict_pecl['repo'], 'content/dict_mapping_locs.json')
-        with open(path_save, 'w') as f:
-            json.dump(dict_mapping, f)
-    #     df_mapping.to_json(path_save)
-    # return df_mapping
-    return dict_mapping
-
 def count_rows_per_unique_val(df, col_interest='footprintWKT'):
     # unique_vals = df[col_interest].unique()
     count_obs_per_point = df.groupby(col_interest).size()
@@ -198,7 +161,7 @@ def create_minimal_df_bms(df_clean):
                             'area', 'point', 'decimalLongitude', 'decimalLatitude'], axis=1)
     return df_minimal
 
-def create_species_presence_per_loc_and_date(df_minimal, verbose=1):
+def create_species_abundance_per_loc_and_date(df_minimal, verbose=1):
     species_list = df_minimal.species.unique()
     if verbose:
         print(f'Unique number of species {len(species_list)}')
@@ -224,7 +187,7 @@ def create_species_presence_per_loc_and_date(df_minimal, verbose=1):
     
     return df_summary, species_list
 
-def create_species_presence_per_loc(df_summary, species_list):
+def create_species_abundance_per_loc(df_summary, species_list):
     df_summary['n_visits'] = 1  
     df_per_loc = df_summary.groupby('tuple_coords').sum().reset_index()
     df_per_loc = df_per_loc.drop(['eventDate'], axis=1)
@@ -234,6 +197,97 @@ def create_species_presence_per_loc(df_summary, species_list):
     for sp in species_list:
         df_per_loc_norm[sp] = df_per_loc_norm[sp] / df_per_loc_norm['n_visits']
     return df_per_loc, df_per_loc_norm    
+
+def create_species_presence_per_loc(df_summary, species_list):
+    df_presence = df_summary.copy()
+    df_presence[species_list] = df_presence[species_list].applymap(lambda x: 1 if x > 0 else 0)  # presence/absence
+    if 'n_visits' not in df_presence.columns:
+        df_presence['n_visits'] = 1
+    df_presence = df_presence.groupby('tuple_coords').sum().reset_index()
+    df_presence = df_presence.drop(columns=['eventDate'])
+
+    for kk in species_list:
+        df_presence[kk] = df_presence[kk].astype(float)  # to avoid dtype warning in next step
+    for ii in range(len(df_presence)):  # normalise by number of visits
+        df_presence.loc[ii, species_list] = df_presence.loc[ii, species_list] / df_presence.loc[ii, 'n_visits']
+    return df_presence
+
+def create_species_dataset(df, df_mapping_locs=None,
+                           dataset_type='presence',
+                           year_min=None, year_max=None,
+                           threshold_n_obs_per_location=200, verbose=1,
+                           folder_save=None, save_csv=False):
+    if verbose:
+        print('-- Starting to create species dataset. Copying.')
+    df = df.copy()
+    if verbose:
+        print(f'-- Creating new data set from {len(df)} records.\n-- Getting locations.')
+    if df_mapping_locs is None:
+        df_mapping_locs, df = load_names_unique_locs(df)
+    if verbose:
+        print(f'-- Loaded {len(df_mapping_locs)} unique locations.\n-- Filtering by year.')
+    if year_min is not None:
+        assert type(year_min) == int, type(year_min)
+        df = df[df.year >= year_min]
+    if year_max is not None:
+        assert type(year_max) == int, type(year_max)
+        if year_min is not None:
+            assert year_max >= year_min, (year_max, year_min)
+        df = df[df.year <= year_max] 
+    assert len(df) > 0, f'No records left after filtering by year {year_min} - {year_max}'
+    if verbose:
+        print(f'-- Kept {len(df)} records after filtering by year.\n-- Cleaning data.')
+    df_clean = clean_bms_data(df, threshold_n_obs_per_location=threshold_n_obs_per_location, verbose=verbose)
+    df_minimal = create_minimal_df_bms(df_clean)
+    if verbose:
+        print(f'-- Aggregating data to {dataset_type}.')
+    df_summary, species_list = create_species_abundance_per_loc_and_date(df_minimal, verbose=verbose)
+    if dataset_type == 'presence':
+        df_save = create_species_presence_per_loc(df_summary, species_list)
+    elif dataset_type == 'abundance':
+        df_per_loc, df_per_loc_norm = create_species_abundance_per_loc(df_summary, species_list)
+        df_save = df_per_loc
+    
+    if verbose:
+        print(f'-- Matching locations coordinates to names.')
+    ## match tuple coords to name_loc. Because of float errors it's a bit annoying:
+    dist_mat = np.zeros((len(df_save), len(df_mapping_locs)))
+    for i, tc1 in enumerate(df_save.tuple_coords):
+        for j, tc2 in enumerate(df_mapping_locs.tuple_coords):
+            dist_mat[i, j] = np.linalg.norm(np.array(tc1) - np.array(tc2))
+    idx_min = np.argmin(dist_mat, axis=1)
+    assert len(idx_min) == len(df_save) and len(idx_min) == len(np.unique(idx_min)), (len(idx_min), len(df_save), len(np.unique(idx_min)))
+    df_save['name_loc'] = df_mapping_locs.iloc[idx_min].name_loc.values
+
+    ## assert that all locations match the other way round too:
+    for i_row in range(len(df_save)):
+        tmp = df_mapping_locs[df_mapping_locs.name_loc == df_save.iloc[i_row].name_loc]
+        assert len(tmp) == 1
+        if tmp.iloc[0].tuple_coords != df_save.iloc[i_row].tuple_coords:
+            assert np.isclose(tmp.iloc[0].tuple_coords[0], df_save.iloc[i_row].tuple_coords[0])
+
+    if verbose:
+        print(f'-- Created data set with {len(df_save)} locations and {len(species_list)} species.')
+    if save_csv:
+        print('-- Saving data.')
+        if folder_save is None:
+            folder_save = os.path.join(path_dict_pecl['data_folder'], f'bms_{dataset_type}')
+            if not os.path.exists(folder_save):
+                os.makedirs(folder_save)
+        filename = f'bms_{dataset_type}_y-{year_min}-{year_max}.csv'
+        path_save = os.path.join(folder_save, filename)
+        df_save.to_csv(path_save)
+    if verbose:
+        print('-- Done.')
+    return df_save, df_summary, species_list
+
+def load_species_dataset(folder_save=None, year_min=2018, year_max=2019, dataset_type='presence'):
+    filename = f'bms_{dataset_type}_y-{year_min}-{year_max}.csv'
+    if folder_save is None:
+        folder_save = os.path.join(path_dict_pecl['data_folder'], f'bms_{dataset_type}')
+    path_save = os.path.join(folder_save, filename)
+    df_save = pd.read_csv(path_save, index_col=0)
+    return df_save
 
 def plot_obs_per_year(df):
     df_tmp = df.groupby('year').size().reset_index()
@@ -279,7 +333,7 @@ def opt_leaf(w_mat, dim=0, link_metric='correlation'):
     return opt_leaves, (link_mat, dist)
 
 def plot_clusters_species_per_loc(df_summary, species_list, threshold_clusters=20):
-    _, df_per_loc_norm = create_species_presence_per_loc(df_summary, species_list)
+    _, df_per_loc_norm = create_species_abundance_per_loc(df_summary, species_list)
 
     ## cluster & sort:
     vals_species = df_per_loc_norm[species_list].values
