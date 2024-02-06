@@ -250,7 +250,7 @@ def create_species_dataset(df, df_mapping_locs=None,
     
     if verbose:
         print(f'-- Matching locations coordinates to names.')
-    ## match tuple coords to name_loc. Because of float errors it's a bit annoying:
+    ## match tuple coords to name_loc. Because of float errors, use isclose to match coordinates:
     dist_mat = np.zeros((len(df_save), len(df_mapping_locs)))
     for i, tc1 in enumerate(df_save.tuple_coords):
         for j, tc2 in enumerate(df_mapping_locs.tuple_coords):
@@ -259,7 +259,7 @@ def create_species_dataset(df, df_mapping_locs=None,
     assert len(idx_min) == len(df_save) and len(idx_min) == len(np.unique(idx_min)), (len(idx_min), len(df_save), len(np.unique(idx_min)))
     df_save['name_loc'] = df_mapping_locs.iloc[idx_min].name_loc.values
 
-    ## assert that all locations match the other way round too:
+    ## assert that all locations match the other way around too & isclose because of float errors:
     for i_row in range(len(df_save)):
         tmp = df_mapping_locs[df_mapping_locs.name_loc == df_save.iloc[i_row].name_loc]
         assert len(tmp) == 1
@@ -274,15 +274,17 @@ def create_species_dataset(df, df_mapping_locs=None,
             folder_save = os.path.join(path_dict_pecl['data_folder'], f'bms_{dataset_type}')
             if not os.path.exists(folder_save):
                 os.makedirs(folder_save)
-        filename = f'bms_{dataset_type}_y-{year_min}-{year_max}.csv'
+        filename = f'bms_{dataset_type}_y-{year_min}-{year_max}_th-{threshold_n_obs_per_location}.csv'
         path_save = os.path.join(folder_save, filename)
         df_save.to_csv(path_save)
     if verbose:
         print('-- Done.')
     return df_save, df_summary, species_list
 
-def load_species_dataset(folder_save=None, year_min=2018, year_max=2019, dataset_type='presence'):
-    filename = f'bms_{dataset_type}_y-{year_min}-{year_max}.csv'
+def load_species_dataset(folder_save=None, year_min=2018, year_max=2019, 
+                         threshold_n_obs_per_location=200,
+                         dataset_type='presence'):
+    filename = f'bms_{dataset_type}_y-{year_min}-{year_max}_th-{threshold_n_obs_per_location}.csv'
     if folder_save is None:
         folder_save = os.path.join(path_dict_pecl['data_folder'], f'bms_{dataset_type}')
     path_save = os.path.join(folder_save, filename)
