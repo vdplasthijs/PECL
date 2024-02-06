@@ -23,6 +23,8 @@ import torchmetrics
 from torchvision import transforms
 import torchvision.transforms.functional as TF
 import pytorch_lightning as pl
+from pytorch_lightning import loggers as pl_loggers
+
 
 # sys.path.append(os.path.join(path_dict_pecl['repo'], 'content/'))
 # import api_keys
@@ -47,14 +49,15 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
 
 class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
-    def __init__(self, image_folder, presence_csv, verbose=1):
+    def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
+                 augment_image=False, verbose=1):
         super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
         self.presence_csv = presence_csv
         self.verbose = verbose
         self.normalise_image = True
-        self.augment_image = False
-        self.shuffle_order_data = False
+        self.augment_image = augment_image
+        self.shuffle_order_data = shuffle_order_data
         self.load_data()
 
     def load_data(self, cols_not_species=['tuple_coords', 'n_visits', 'name_loc'],
@@ -93,6 +96,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.df_presence = df_presence
 
         self.species_list = [x for x in self.df_presence.columns if x not in cols_not_species]
+        self.n_species = len(self.species_list)
         
     def find_image_path(self, name_loc):
         im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images}'
@@ -169,21 +173,25 @@ class ImageEncoder(pl.LightningModule):
         152: models.resnet152,
     }
 
-    def __init__(self, n_species, n_bands=4, n_layers_mlp=2,
+    def __init__(self, n_species, n_enc_channels=32, n_bands=4, n_layers_mlp=2,
                  pretrained_resnet=True, freeze_resnet=True,
                  optimizer_name='SGD', resnet_version=18,
-                 lr=1e-3, batch_size=16, 
+                 pecl_distance_metric='cosine',
+                 lr=1e-3, #  batch_size=16, 
+                 training_method='pecl',
                  verbose=1):
         super(ImageEncoder, self).__init__()
         self.n_species = n_species
+        self.n_enc_channels = n_enc_channels
         self.n_bands = n_bands
         self.verbose = verbose
         self.pretrained_resnet = pretrained_resnet
         self.freeze_resnet = freeze_resnet
         self.lr = lr
-        self.batch_size = batch_size
+        # self.batch_size = batch_size
         self.resnet_version = resnet_version
         self.n_layers_mlp = n_layers_mlp
+        self.pecl_distance_metric = pecl_distance_metric
 
         self.optimizer_name = optimizer_name
         if optimizer_name == 'SGD':
@@ -194,21 +202,23 @@ class ImageEncoder(pl.LightningModule):
             assert False, f'Optimizer {optimizer_name} not implemented.'
 
         self.build_model()
-       
-        
-        
-        self.loss_fn = nn.BCEWithLogitsLoss()
-        # self.train_acc = torchmetrics.Accuracy()
-        # self.val_acc = torchmetrics.Accuracy()
-        # self.test_acc = torchmetrics.Accuracy()
 
+        if training_method == 'pecl':
+            self.forward_pass = self.pecl_pass
+        elif training_method == 'pred':
+            self.forward_pass = self.pred_pass
+        elif training_method == 'pred_incl_enc':
+            self.forward_pass = self.pred_pass_incl_encoding_model
+        else:
+            assert False, f'Training method {training_method} not implemented.'
+       
     def build_model(self):
+        ## Load Resnet, if needed modify first layer to accept 4 bands
         self.resnet = self.resnets[self.resnet_version](pretrained=self.pretrained_resnet)
         if self.n_bands == 3:
             pass 
         elif self.n_bands == 4:  # https://stackoverflow.com/questions/62629114/how-to-modify-resnet-50-with-4-channels-as-input-using-pre-trained-weights-in-py
             weight = self.resnet.conv1.weight.clone()  # copy the weights from the first layer
-            print(type(weight), weight.shape)
             self.resnet.conv1 = nn.Conv2d(4, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)  # change the first layer to accept 4 channels
             with torch.no_grad():
                 self.resnet.conv1.weight[:, :3] = weight
@@ -216,26 +226,29 @@ class ImageEncoder(pl.LightningModule):
         else:
             assert False, f'Number of bands {self.n_bands} not implemented.'
 
-        if self.freeze_resnet:
-            for param in self.resnet.parameters():
-                param.requires_grad = False
-
-        # if tune_fc_only:  # option to only tune the fully-connected layers
-        #     for child in list(self.resnet_model.children())[:-1]:
-        #         for param in child.parameters():
-        #             param.requires_grad = False
-
+        ## Modify last layer to output n_enc_channels
         if self.n_layers_mlp == 1:
-            self.resnet.fc = nn.Linear(self.resnet.fc.in_features, self.n_species)
+            self.resnet.fc = nn.Linear(self.resnet.fc.in_features, self.n_enc_channels)
         elif self.n_layers_mlp == 2:
             self.resnet.fc = nn.Sequential(
                 nn.Linear(self.resnet.fc.in_features, 512),
                 nn.ReLU(),
-                nn.Linear(512, self.n_species)
+                nn.Linear(512, self.n_enc_channels)
             )
         else:
             assert False, f'Number of layers {self.n_layers_mlp} not implemented.'    
-    
+
+        ## Freeze Resnet, except for self.resnet.fc, if requested:
+        if self.freeze_resnet:
+            for child in list(self.resnet.children())[:-1]:  # Freeze all layers except the last one
+                for param in child.parameters():  # set all parameters to not require gradients
+                    param.requires_grad = False
+
+        ## Prediction model to predict presence/absence from encoded image
+        self.prediction_model = nn.Sequential(
+            nn.Linear(self.n_enc_channels, self.n_species),
+            nn.Sigmoid()
+        )
 
     def forward(self, x):
         if x.ndim == 3:
@@ -246,44 +259,136 @@ class ImageEncoder(pl.LightningModule):
         print('WARNING: configure_optimizers() not implemented yet.?')
         return self.optimizer(self.parameters(), lr=self.lr)
     
-    def pecl_pass(self, batch, distance_metric='cosine'):
-        assert self.batch_size == len(batch), f'Batch size {len(batch)} does not match model batch size {self.batch_size}.'
+    def pecl_pass(self, batch):
+        '''Train the encoding model using the PECL method.'''
         im, pres_vec = batch
+        # print(im.shape, pres_vec.shape, self.batch_size, len(im), len(pres_vec))
+        curr_batch_size = len(im)  # would normally be self.batch_size, but last batch might be smaller
         # im = im.to(self.device)
         # pres_vec = pres_vec.to(self.device)
 
         # Forward pass
         im_enc = self.forward(im)
         
-        dist_array_ims = torch.zeros_like(self.batch_size * (self.batch_size - 1) // 2)
+        ## Calculate distance between pairs of images and pairs of presence vectors
+        dist_array_ims = torch.zeros(curr_batch_size * (curr_batch_size - 1) // 2)
         dist_array_pres = torch.zeros_like(dist_array_ims)
-        for i in range(self.batch_size):
-            for j in range(i + 1, self.batch_size):
-                ind_pair = i * (self.batch_size - 1) + j
-                if distance_metric == 'cosine':
+        ind_pair = -1
+        for i in range(curr_batch_size):
+            for j in range(i + 1, curr_batch_size):  # avoid duplicates
+                ind_pair += 1
+                # print(ind_pair, i, j, im[i].shape, im[j].shape, im_enc[i].shape, im_enc[j].shape)
+                if self.pecl_distance_metric == 'cosine':
                     dist_array_ims[ind_pair] = 1 - F.cosine_similarity(im_enc[i], im_enc[j], dim=0)
                     dist_array_pres[ind_pair] = 1 - F.cosine_similarity(pres_vec[i], pres_vec[j], dim=0)
-                elif distance_metric == 'euclidean':
+                elif self.pecl_distance_metric == 'euclidean':
                     dist_array_ims[ind_pair] = F.pairwise_distance(im_enc[i], im_enc[j], p=2)
                     dist_array_pres[ind_pair] = F.pairwise_distance(pres_vec[i], pres_vec[j], p=2)
                 else:
-                    assert False, f'Distance metric {distance_metric} not implemented.'
-        loss_array = torch.abs(dist_array_ims - dist_array_pres)
+                    assert False, f'Distance metric {self.pecl_distance_metric} not implemented.'
+        loss_array = torch.abs(dist_array_ims - dist_array_pres)  # L1 loss
         loss = torch.mean(loss_array)
+        return loss
+    
+    def pred_pass(self, batch):
+        '''Only trains the prediction model, not the encoding model.'''
+        im, pres_vec = batch
+        # im = im.to(self.device)
+        # pres_vec = pres_vec.to(self.device)
+
+        # Forward pass
+        with torch.no_grad():  # Don't train encoding model here. 
+            im_enc = self.forward(im)
+        pres_pred = self.prediction_model(im_enc)
+        loss = F.mse_loss(pres_pred, pres_vec) 
+        return loss
+    
+    def pred_pass_incl_encoding_model(self, batch):
+        '''Trains the prediction model and encoding model (but using regular SL back-prop, not PECL).'''
+        im, pres_vec = batch
+        # im = im.to(self.device)
+        # pres_vec = pres_vec.to(self.device)
+
+        # Forward pass
+        im_enc = self.forward(im)
+        pres_pred = self.prediction_model(im_enc)
+        loss = F.mse_loss(pres_pred, pres_vec) 
         return loss
                 
     def training_step(self, batch, batch_idx):
-        loss = self.pecl_pass(batch)
+        loss = self.forward_pass(batch)
         self.log('train_loss', loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
-        loss = self.pecl_pass(batch)
+        loss = self.forward_pass(batch)
         self.log('val_loss', loss)
         return loss
     
     def test_step(self, batch, batch_idx):
-        loss = self.pecl_pass(batch)
+        loss = self.forward_pass(batch)
         self.log('test_loss', loss)
         return loss
     
+
+def train_pecl(n_enc_channels=32, n_layers_mlp=2, pretrained_resnet=True, freeze_resnet=True,
+               resnet_version=18, pecl_distance_metric='cosine',
+               training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
+               image_folder=None, presence_csv=None,
+               verbose=1, fix_seed=42, use_mps=True):
+    if fix_seed is not None:
+        pl.seed_everything(fix_seed)
+
+    if image_folder is None:
+        image_folder = '/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
+    if presence_csv is None:
+        presence_csv = '/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
+
+    if use_mps:
+        assert torch.backends.mps.is_available()
+        assert torch.backends.mps.is_built()
+        tb_logger = pl_loggers.TensorBoardLogger(save_dir='/Users/t.vanderplas/models/PECL')
+        n_cpus = 8
+        # acc_use = 'mps'
+        acc_use = 'cpu'
+        folder_save = '/Users/t.vanderplas/models/PECL/'
+    else:
+        assert torch.cuda.is_available(), 'No GPU available.'
+        tb_logger = pl_loggers.TensorBoardLogger(save_dir='/home/tplas/models/')
+        n_cpus = 8
+        acc_use = 'gpu'
+        folder_save = '/home/tplas/models/PECL/'
+    if not os.path.exists(folder_save):
+        os.makedirs(folder_save)
+        print(f'Created folder {folder_save}.')
+    if verbose > 0:  # possibly also insert assert versions
+        print(f'Pytorch version is {torch.__version__}') 
+
+    ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
+                              shuffle_order_data=True)
+    train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
+    train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, persistent_workers=True) #drop_last=True, pin_memory=True
+    val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, persistent_workers=True) #drop_last=True, pin_memory=True
+
+    model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, n_bands=4, n_layers_mlp=n_layers_mlp,
+                        pretrained_resnet=pretrained_resnet, freeze_resnet=freeze_resnet,
+                        optimizer_name='SGD', resnet_version=resnet_version,
+                        pecl_distance_metric=pecl_distance_metric,
+                        lr=lr,  # batch_size=batch_size, 
+                        training_method=training_method,
+                        verbose=verbose)
+    
+    # cb_metrics = cl.MetricsCallback()
+    callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
+                                            filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}")]
+
+    trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use, progress_bar_refresh_rate=20,
+                         callbacks=callbacks, logger=tb_logger)
+
+    timestamp_start = datetime.datetime.now()
+    print(f'-- Starting training at {timestamp_start} with {n_epochs_max} epochs.')
+    trainer.fit(model, train_dl, val_dl)
+
+    timestamp_end = datetime.datetime.now()
+    print(f'-- Finished training at {timestamp_end}.')
+    return model
