@@ -156,7 +156,10 @@ class DataSetImagePresence(torch.utils.data.Dataset):
 class ImageEncoder(pl.LightningModule):
     '''
     Encode image using CNN Resnet + FCN.
+    Train/test using various methods: PECL, or direct prediction.
+
     https://github.com/Stevellen/ResNet-Lightning/blob/master/resnet_classifier.py
+    Partly inspired by https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial17/SimCLR.html
     '''
     resnets = {
         18: models.resnet18,
@@ -166,10 +169,10 @@ class ImageEncoder(pl.LightningModule):
         152: models.resnet152,
     }
 
-    def __init__(self, n_species, n_bands=4, 
+    def __init__(self, n_species, n_bands=4, n_layers_mlp=2,
                  pretrained_resnet=True, freeze_resnet=True,
                  optimizer_name='SGD', resnet_version=18,
-                 lr=1e-3, batch_size=16,
+                 lr=1e-3, batch_size=16, 
                  verbose=1):
         super(ImageEncoder, self).__init__()
         self.n_species = n_species
@@ -180,7 +183,8 @@ class ImageEncoder(pl.LightningModule):
         self.lr = lr
         self.batch_size = batch_size
         self.resnet_version = resnet_version
-        
+        self.n_layers_mlp = n_layers_mlp
+
         self.optimizer_name = optimizer_name
         if optimizer_name == 'SGD':
             self.optimizer = optim.SGD
@@ -221,9 +225,17 @@ class ImageEncoder(pl.LightningModule):
         #         for param in child.parameters():
         #             param.requires_grad = False
 
-        # just one linear layer:
-        self.resnet.fc = nn.Linear(self.resnet.fc.in_features, self.n_species)
-        
+        if self.n_layers_mlp == 1:
+            self.resnet.fc = nn.Linear(self.resnet.fc.in_features, self.n_species)
+        elif self.n_layers_mlp == 2:
+            self.resnet.fc = nn.Sequential(
+                nn.Linear(self.resnet.fc.in_features, 512),
+                nn.ReLU(),
+                nn.Linear(512, self.n_species)
+            )
+        else:
+            assert False, f'Number of layers {self.n_layers_mlp} not implemented.'    
+    
 
     def forward(self, x):
         if x.ndim == 3:
@@ -231,14 +243,47 @@ class ImageEncoder(pl.LightningModule):
         return self.resnet(x)
     
     def configure_optimizers(self):
+        print('WARNING: configure_optimizers() not implemented yet.?')
         return self.optimizer(self.parameters(), lr=self.lr)
     
-def ModelPECL(ImageEncoder):
-    def __init__(self):
-        super(ModelPECL, self).__init__()
-        self.image_encoder = ImageEncoder
+    def pecl_pass(self, batch, distance_metric='cosine'):
+        assert self.batch_size == len(batch), f'Batch size {len(batch)} does not match model batch size {self.batch_size}.'
+        im, pres_vec = batch
+        # im = im.to(self.device)
+        # pres_vec = pres_vec.to(self.device)
 
-        # self.loss_fn = nn.BCEWithLogitsLoss()
-        # self.train_acc = torchmetrics.Accuracy()
-        # self.val_acc = torchmetrics.Accuracy()
-        # self.test_acc = torchmetrics.Accuracy()
+        # Forward pass
+        im_enc = self.forward(im)
+        
+        dist_array_ims = torch.zeros_like(self.batch_size * (self.batch_size - 1) // 2)
+        dist_array_pres = torch.zeros_like(dist_array_ims)
+        for i in range(self.batch_size):
+            for j in range(i + 1, self.batch_size):
+                ind_pair = i * (self.batch_size - 1) + j
+                if distance_metric == 'cosine':
+                    dist_array_ims[ind_pair] = 1 - F.cosine_similarity(im_enc[i], im_enc[j], dim=0)
+                    dist_array_pres[ind_pair] = 1 - F.cosine_similarity(pres_vec[i], pres_vec[j], dim=0)
+                elif distance_metric == 'euclidean':
+                    dist_array_ims[ind_pair] = F.pairwise_distance(im_enc[i], im_enc[j], p=2)
+                    dist_array_pres[ind_pair] = F.pairwise_distance(pres_vec[i], pres_vec[j], p=2)
+                else:
+                    assert False, f'Distance metric {distance_metric} not implemented.'
+        loss_array = torch.abs(dist_array_ims - dist_array_pres)
+        loss = torch.mean(loss_array)
+        return loss
+                
+    def training_step(self, batch, batch_idx):
+        loss = self.pecl_pass(batch)
+        self.log('train_loss', loss)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss = self.pecl_pass(batch)
+        self.log('val_loss', loss)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        loss = self.pecl_pass(batch)
+        self.log('test_loss', loss)
+        return loss
+    
