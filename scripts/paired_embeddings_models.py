@@ -50,6 +50,7 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
 class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
+                 species_process='all',
                  augment_image=False, verbose=1):
         super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
@@ -58,6 +59,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.normalise_image = True
         self.augment_image = augment_image
         self.shuffle_order_data = shuffle_order_data
+        self.species_process = species_process
         self.load_data()
 
     def load_data(self, cols_not_species=['tuple_coords', 'n_visits', 'name_loc'],
@@ -93,11 +95,49 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             print('Sorting data by name_loc.')
             df_presence = df_presence.sort_values(by='name_loc')
         df_presence = df_presence.reset_index(drop=True)
-        self.df_presence = df_presence
 
-        self.species_list = [x for x in self.df_presence.columns if x not in cols_not_species]
+        original_species_list = [x for x in df_presence.columns if x not in cols_not_species]
+        n_original_species = len(original_species_list)
+        if self.species_process == 'all':
+            pass 
+        # elif self.species_process == 'only_present':
+        #     cols_species_present = [x for x in original_species_list if np.sum(df_presence[x]) > 0]
+        #     cols_keep = cols_not_species + cols_species_present
+        #     df_presence = df_presence[cols_keep]
+        #     print(f'Only keeping {len(cols_species_present)}/{len(original_species_list)} species with at least one record present.')
+        elif self.species_process == 'priority_species':
+            priority_species = ['Carterocephalus palaemon', 'Thymelicus acteon', 'Leptidea sinapis',  # 'Leptidea juvernica', 
+                                'Coenonympha tullia',
+                                # 'Boloria euphrosyne', 
+                                'Fabriciana adippe', 'Euphydryas aurinia',
+                                # 'Melitaea athalia', 
+                                'Hamearis lucina',
+                                # 'Phengaris arion',
+                                  'Aricia artaxerxes']  ## From BC 2022 report: These UK Priority Species of butterflies are Chequered Skipper, Lulworth Skipper, Wood White, Cryptic Wood White, Large Heath, Pearl-bordered Fritillary, High Brown Fritillary, Marsh Fritillary, Heath Fritillary, Duke of Burgundy, Large Blue and Northern Brown Argus
+            for sp in priority_species:
+                assert sp in original_species_list, f'Indicator species {sp} not found in species list.'
+            cols_keep = cols_not_species + priority_species
+            df_presence = df_presence[cols_keep]
+            print(f'Only keeping {len(priority_species)}/{len(original_species_list)} species that are indicator species.')
+            # assert False, 'Not implemented yet.'
+        elif self.species_process == 'top_20':
+            obs_per_species = df_presence[original_species_list].sum(axis=0)
+            inds_sort = np.argsort(obs_per_species)
+            cols_species_top20 = inds_sort[-20:]
+            cols_keep = cols_not_species + [original_species_list[x] for x in cols_species_top20]
+            df_presence = df_presence[cols_keep]
+            print(f'Only keeping top 20 species with most observations.')
+        elif self.species_process == 'pca':
+            n_pcs_keep = 16
+            ## get PCA of species data
+            assert False, 'Not implemented yet.'
+        else:
+            assert False, f'Species process {self.species_process} not implemented.'
+
+        self.species_list = [x for x in df_presence.columns if x not in cols_not_species]
+        self.df_presence = df_presence
         self.n_species = len(self.species_list)
-        
+    
     def find_image_path(self, name_loc):
         im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images}'
         im_file_path = os.path.join(self.image_folder, im_file_name)
