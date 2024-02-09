@@ -405,6 +405,7 @@ def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0,
 
     ex_collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
 
+    ## also consider creating a mosaic instead: https://gis.stackexchange.com/questions/363163/filter-out-the-least-cloudy-images-in-sentinel-google-earth-engine
     ex_im_gee = ee.Image(ex_collection 
                         #   .project(crs='EPSG:27700', scale=1)
                         .filterBounds(aoi) 
@@ -476,3 +477,8 @@ def download_gee_image(df_mapping_locs_row, use_point=False,
     im_crop.rio.to_raster(filepath)
 
     return im_crop, filepath
+
+def create_timestamp():
+    dt = datetime.datetime.now()
+    timestamp = str(dt.date()) + '-' + str(dt.hour).zfill(2) + str(dt.minute).zfill(2)
+    return timestamp

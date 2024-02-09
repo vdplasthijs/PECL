@@ -2,7 +2,7 @@ from json import encoder
 import os, sys, copy, shutil
 import numpy as np
 from tqdm import tqdm
-import datetime
+import datetime, pickle
 import random
 import pickle
 import pandas as pd 
@@ -12,6 +12,7 @@ import rasterio.features
 import rioxarray as rxr
 import xarray as xr
 import shapely.geometry
+import matplotlib.pyplot as plt
 
 import torch
 from torch import nn
@@ -197,6 +198,35 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         pres_vec = torch.tensor(pres_vec.values.astype(np.float32))
         return im, pres_vec
     
+    def plot_image(self, index, ax=None):
+        im, pres_vec = self.__getitem__(index)
+        if len(im) == 4:
+            im = im[0:3]
+        elif len(im) == 3:
+            pass
+        else:
+            assert False, f'Number of bands {len(im)} not implemented.'
+        ## to numpy 
+        im = im.numpy()
+
+        if ax is None:
+            ax = plt.subplot(111)
+        if type(im) == xr.DataArray:
+            plot_im = im.to_numpy()
+        else:
+            plot_im = im
+        use_im_extent = False
+        if use_im_extent:
+            extent = [im.x.min(), im.x.max(), im.y.min(), im.y.max()]
+        else:
+            extent = None
+        rasterio.plot.show(plot_im, ax=ax, cmap='viridis', 
+                        extent=extent, vmin=0, vmax=1)
+        for sp in ax.spines:
+            ax.spines[sp].set_visible(False)
+        ax.set_aspect('equal')
+        ax.set_title(f'Image {index} (RGB only)')
+
 class ImageEncoder(pl.LightningModule):
     '''
     Encode image using CNN Resnet + FCN.
@@ -213,12 +243,13 @@ class ImageEncoder(pl.LightningModule):
         152: models.resnet152,
     }
 
-    def __init__(self, n_species, n_enc_channels=32, n_bands=4, n_layers_mlp=2,
+    def __init__(self, n_species=62, n_enc_channels=32, n_bands=4, n_layers_mlp=2,
                  pretrained_resnet=True, freeze_resnet=True,
                  optimizer_name='SGD', resnet_version=18,
                  pecl_distance_metric='cosine',
                  lr=1e-3, #  batch_size=16, 
                  training_method='pecl',
+                 normalise_embedding=None,
                  verbose=1):
         super(ImageEncoder, self).__init__()
         self.n_species = n_species
@@ -232,14 +263,9 @@ class ImageEncoder(pl.LightningModule):
         self.resnet_version = resnet_version
         self.n_layers_mlp = n_layers_mlp
         self.pecl_distance_metric = pecl_distance_metric
-
         self.optimizer_name = optimizer_name
-        if optimizer_name == 'SGD':
-            self.optimizer = optim.SGD
-        elif optimizer_name == 'Adam':
-            self.optimizer = optim.Adam
-        else:
-            assert False, f'Optimizer {optimizer_name} not implemented.'
+        self.normalise_embedding = normalise_embedding
+        self.description = f'ImageEncoder with {n_enc_channels} encoding channels, {n_bands} bands, {n_species} species, {n_layers_mlp} MLP layers, {resnet_version} Resnet, {pecl_distance_metric} distance metric, {training_method} training method.'
 
         self.build_model()
 
@@ -252,6 +278,19 @@ class ImageEncoder(pl.LightningModule):
         else:
             assert False, f'Training method {training_method} not implemented.'
        
+    def __str__(self) -> str:
+        return super().__str__() + f' {self.description}'
+    
+    def __repr__(self) -> str:
+        return super().__repr__() + f' {self.description}'
+
+    def change_description(self, new_description='', add=True):
+        '''Just used for keeping notes etc.'''
+        if add:
+            self.description = self.description + '\n' + new_description
+        else:
+            self.description = new_description
+
     def build_model(self):
         ## Load Resnet, if needed modify first layer to accept 4 bands
         self.resnet = self.resnets[self.resnet_version](pretrained=self.pretrained_resnet)
@@ -293,20 +332,31 @@ class ImageEncoder(pl.LightningModule):
     def forward(self, x):
         if x.ndim == 3:
             x = x.unsqueeze(0)
-        return self.resnet(x)
+        encoding = self.resnet(x)
+        if self.normalise_embedding == None:
+            pass
+        elif self.normalise_embedding == 'l2':
+            ## dim=0; normalise each feature element across batch. dim=1; normalise each batch element across features.
+            encoding = F.normalize(encoding, p=2, dim=1)
+        else:
+            assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
+        return encoding
     
     def configure_optimizers(self):
-        print('WARNING: configure_optimizers() not implemented yet.?')
+        if self.optimizer_name == 'SGD':
+            self.optimizer = optim.SGD
+        elif self.optimizer_name == 'Adam':
+            self.optimizer = optim.Adam
+        else:
+            assert False, f'Optimizer {self.optimizer_name} not implemented.'
+
         return self.optimizer(self.parameters(), lr=self.lr)
     
     def pecl_pass(self, batch):
         '''Train the encoding model using the PECL method.'''
         im, pres_vec = batch
-        # print(im.shape, pres_vec.shape, self.batch_size, len(im), len(pres_vec))
         curr_batch_size = len(im)  # would normally be self.batch_size, but last batch might be smaller
-        # im = im.to(self.device)
-        # pres_vec = pres_vec.to(self.device)
-
+        
         # Forward pass
         im_enc = self.forward(im)
         
@@ -333,9 +383,7 @@ class ImageEncoder(pl.LightningModule):
     def pred_pass(self, batch):
         '''Only trains the prediction model, not the encoding model.'''
         im, pres_vec = batch
-        # im = im.to(self.device)
-        # pres_vec = pres_vec.to(self.device)
-
+        
         # Forward pass
         with torch.no_grad():  # Don't train encoding model here. 
             im_enc = self.forward(im)
@@ -346,9 +394,7 @@ class ImageEncoder(pl.LightningModule):
     def pred_pass_incl_encoding_model(self, batch):
         '''Trains the prediction model and encoding model (but using regular SL back-prop, not PECL).'''
         im, pres_vec = batch
-        # im = im.to(self.device)
-        # pres_vec = pres_vec.to(self.device)
-
+        
         # Forward pass
         im_enc = self.forward(im)
         pres_pred = self.prediction_model(im_enc)
@@ -361,20 +407,67 @@ class ImageEncoder(pl.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-        loss = self.forward_pass(batch)
-        self.log('val_loss', loss)
-        return loss
+        with torch.no_grad():
+            loss = self.forward_pass(batch)
+            self.log('val_loss', loss)
+            return loss
     
     def test_step(self, batch, batch_idx):
-        loss = self.forward_pass(batch)
-        self.log('test_loss', loss)
-        return loss
-    
+        with torch.no_grad():
+            loss = self.forward_pass(batch)
+            self.log('test_loss', loss)
+            return loss
+        
+    def save_model(self, folder='/Users/t.vanderplas/models/PECL/', 
+                   verbose=1):
+        '''Save model'''
+        ## Save v_num that is used for tensorboard
+        self.v_num = self.logger.version
+        ## Save logging directory that is used for tensorboard
+        self.log_dir = self.logger.log_dir
+        
+        timestamp = cdu.create_timestamp()
+        self.filename = f'PECL-ImEn_{timestamp}.data'
+        self.model_name = f'PECL-ImEn_{timestamp}'
+        self.filepath = os.path.join(folder, self.filename)
 
-def train_pecl(n_enc_channels=32, n_layers_mlp=2, pretrained_resnet=True, freeze_resnet=True,
+        file_handle = open(self.filepath, 'wb')
+        pickle.dump(self, file_handle)
+
+        if verbose > 0:
+            print(f'PECL-ImEn model saved as {self.filename} at {self.filepath}')
+        return self.filepath
+
+def load_model(folder='/Users/t.vanderplas/models/PECL/', 
+               filename='', verbose=1):
+    '''Load previously saved (pickled) model'''
+    with open(os.path.join(folder, filename), 'rb') as f:
+        model = pickle.load(f)
+
+    if verbose > 0:  # print some info
+        print(f'Loaded {model}')
+        if hasattr(model, 'description') and verbose > 0:
+            print(model.description)
+
+    return model 
+
+def normalised_softmax_distance_batch(batch_embeddings):
+    '''Calculate the distance between two embeddings using the normalised softmax distance.'''
+    inner_prod_mat = torch.mm(batch_embeddings, batch_embeddings.t())
+    # inner_prod_mat = torch.exp(inner_prod_mat)
+    ## upper triangle:
+    # elements_upper_triangle = torch.triu(inner_prod_mat, diagonal=1)
+    # sum_upper_triangle = torch.sum(elements_upper_triangle)
+    # inner_prod_mat = inner_prod_mat / sum_upper_triangle
+    
+    return inner_prod_mat
+    
+def train_pecl(n_enc_channels=32, n_layers_mlp=2, 
+               pretrained_resnet=True, freeze_resnet=True,
                resnet_version=18, pecl_distance_metric='cosine',
+               normalise_embedding=None,
                training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
-               image_folder=None, presence_csv=None,
+               image_folder=None, presence_csv=None, species_process='all',
                verbose=1, fix_seed=42, use_mps=True):
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
@@ -389,8 +482,8 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2, pretrained_resnet=True, freeze
         assert torch.backends.mps.is_built()
         tb_logger = pl_loggers.TensorBoardLogger(save_dir='/Users/t.vanderplas/models/PECL')
         n_cpus = 8
-        # acc_use = 'mps'
-        acc_use = 'cpu'
+        acc_use = 'gpu'
+        # acc_use = 'cpu'
         folder_save = '/Users/t.vanderplas/models/PECL/'
     else:
         assert torch.cuda.is_available(), 'No GPU available.'
@@ -405,15 +498,20 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2, pretrained_resnet=True, freeze
         print(f'Pytorch version is {torch.__version__}') 
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
-                              shuffle_order_data=True)
+                              shuffle_order_data=True, species_process=species_process)
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
-    train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, persistent_workers=True) #drop_last=True, pin_memory=True
-    val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, persistent_workers=True) #drop_last=True, pin_memory=True
+    train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
+                          shuffle=True,
+                          persistent_workers=True) #drop_last=True, pin_memory=True
+    val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
+                        shuffle=False,
+                        persistent_workers=True) #drop_last=True, pin_memory=True
 
     model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, n_bands=4, n_layers_mlp=n_layers_mlp,
                         pretrained_resnet=pretrained_resnet, freeze_resnet=freeze_resnet,
-                        optimizer_name='SGD', resnet_version=resnet_version,
+                        optimizer_name='Adam', resnet_version=resnet_version,
                         pecl_distance_metric=pecl_distance_metric,
+                        normalise_embedding=normalise_embedding,
                         lr=lr,  # batch_size=batch_size, 
                         training_method=training_method,
                         verbose=verbose)
@@ -422,7 +520,9 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2, pretrained_resnet=True, freeze
     callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
                                             filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}")]
 
-    trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use, progress_bar_refresh_rate=20,
+    trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use,
+                         log_every_n_steps=10,  # train loss logging steps (each step = 1 batch)
+                         reload_dataloaders_every_n_epochs=1, # reload such that train_dl re-shuffles.  https://github.com/Lightning-AI/pytorch-lightning/discussions/7332
                          callbacks=callbacks, logger=tb_logger)
 
     timestamp_start = datetime.datetime.now()
@@ -431,4 +531,4 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2, pretrained_resnet=True, freeze
 
     timestamp_end = datetime.datetime.now()
     print(f'-- Finished training at {timestamp_end}.')
-    return model
+    return model, (train_dl, val_dl)
