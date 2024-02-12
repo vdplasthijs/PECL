@@ -13,6 +13,7 @@ import rioxarray as rxr
 import xarray as xr
 import shapely.geometry
 import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA 
 
 import torch
 from torch import nn
@@ -51,7 +52,7 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
 class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
-                 species_process='all',
+                 species_process='all', n_bands=4,
                  augment_image=False, verbose=1):
         super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
@@ -61,6 +62,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.augment_image = augment_image
         self.shuffle_order_data = shuffle_order_data
         self.species_process = species_process
+        self.n_bands = n_bands
         self.load_data()
 
     def load_data(self, cols_not_species=['tuple_coords', 'n_visits', 'name_loc'],
@@ -101,12 +103,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         n_original_species = len(original_species_list)
         if self.species_process == 'all':
             pass 
-        # elif self.species_process == 'only_present':
-        #     cols_species_present = [x for x in original_species_list if np.sum(df_presence[x]) > 0]
-        #     cols_keep = cols_not_species + cols_species_present
-        #     df_presence = df_presence[cols_keep]
-        #     print(f'Only keeping {len(cols_species_present)}/{len(original_species_list)} species with at least one record present.')
-        elif self.species_process == 'priority_species':
+        elif self.species_process == 'priority_species' or self.species_process == 'priority_species_present':
             priority_species = ['Carterocephalus palaemon', 'Thymelicus acteon', 'Leptidea sinapis',  # 'Leptidea juvernica', 
                                 'Coenonympha tullia',
                                 # 'Boloria euphrosyne', 
@@ -120,7 +117,12 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             cols_keep = cols_not_species + priority_species
             df_presence = df_presence[cols_keep]
             print(f'Only keeping {len(priority_species)}/{len(original_species_list)} species that are indicator species.')
-            # assert False, 'Not implemented yet.'
+            if self.species_process == 'priority_species_present':
+                ## change values to 1 if present, 0 if not
+                df_presence[priority_species] = df_presence[priority_species].applymap(lambda x: 1 if x > 0 else 0)
+                print(f'Changing presence/absence to 1/0 for priority species.')
+            n_locs_at_least_one_present = np.sum(df_presence[priority_species].sum(axis=1) > 0)
+            print(f'At least one priority species present in {n_locs_at_least_one_present} out of {len(df_presence)} locations.')
         elif self.species_process == 'top_20':
             obs_per_species = df_presence[original_species_list].sum(axis=0)
             inds_sort = np.argsort(obs_per_species)
@@ -129,9 +131,24 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             df_presence = df_presence[cols_keep]
             print(f'Only keeping top 20 species with most observations.')
         elif self.species_process == 'pca':
-            n_pcs_keep = 16
-            ## get PCA of species data
-            assert False, 'Not implemented yet.'
+            n_pcs_keep = 20
+            pca = PCA(n_components=n_pcs_keep)
+            pca.fit(df_presence[original_species_list].values)
+            df_presence_pca = pd.DataFrame(pca.transform(df_presence[original_species_list].values))
+            df_presence_pca.columns = [f'PCA_{x}' for x in range(n_pcs_keep)]
+
+            ## normalise to 0-1 range
+            min_val = df_presence_pca.min().min()
+            max_val = df_presence_pca.max().max()
+            df_presence_pca = (df_presence_pca - min_val) / (max_val - min_val)
+            self.pca_min_val = min_val
+            self.pca_max_val = max_val
+            self.pca_components = pca.components_
+            self.pca = pca
+
+            df_presence = pd.concat([df_presence[cols_not_species], df_presence_pca], axis=1)
+            total_expl_var = np.sum(pca.explained_variance_ratio_)
+            print(f'PCA with {n_pcs_keep} components explains {100 * total_expl_var:.1f}% of the variance.')
         else:
             assert False, f'Species process {self.species_process} not implemented.'
 
@@ -148,6 +165,13 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         im_file_path = self.find_image_path(name_loc=name_loc)
         im = load_tiff(im_file_path, datatype='np')
         
+        if self.n_bands == 4:
+            pass 
+        elif self.n_bands == 3:
+            im = im[:3, :, :]
+        else:
+            assert False, f'Number of bands {self.n_bands} not implemented.'
+
         if self.normalise_image:
             im = np.clip(im, 0, 3000)
             im = im / 3000.0
@@ -237,15 +261,15 @@ class ImageEncoder(pl.LightningModule):
     '''
     resnets = {
         18: models.resnet18,
-        34: models.resnet34,
+        # 34: models.resnet34,
         50: models.resnet50,
-        101: models.resnet101,
-        152: models.resnet152,
+        # 101: models.resnet101,
+        # 152: models.resnet152,
     }
 
     def __init__(self, n_species=62, n_enc_channels=32, n_bands=4, n_layers_mlp=2,
                  pretrained_resnet=True, freeze_resnet=True,
-                 optimizer_name='SGD', resnet_version=18,
+                 optimizer_name='Adam', resnet_version=18,
                  pecl_distance_metric='cosine',
                  lr=1e-3, #  batch_size=16, 
                  training_method='pecl',
@@ -259,7 +283,6 @@ class ImageEncoder(pl.LightningModule):
         self.pretrained_resnet = pretrained_resnet
         self.freeze_resnet = freeze_resnet
         self.lr = lr
-        # self.batch_size = batch_size
         self.resnet_version = resnet_version
         self.n_layers_mlp = n_layers_mlp
         self.pecl_distance_metric = pecl_distance_metric
@@ -269,12 +292,14 @@ class ImageEncoder(pl.LightningModule):
 
         self.build_model()
 
+        self.train_im_enc_during_pred = False
         if training_method == 'pecl':
             self.forward_pass = self.pecl_pass
         elif training_method == 'pred':
             self.forward_pass = self.pred_pass
         elif training_method == 'pred_incl_enc':
-            self.forward_pass = self.pred_pass_incl_encoding_model
+            self.forward_pass = self.pred_pass
+            self.train_im_enc_during_pred = True
         else:
             assert False, f'Training method {training_method} not implemented.'
        
@@ -332,6 +357,7 @@ class ImageEncoder(pl.LightningModule):
     def forward(self, x):
         if x.ndim == 3:
             x = x.unsqueeze(0)
+
         encoding = self.resnet(x)
         if self.normalise_embedding == None:
             pass
@@ -340,6 +366,7 @@ class ImageEncoder(pl.LightningModule):
             encoding = F.normalize(encoding, p=2, dim=1)
         else:
             assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
+        
         return encoding
     
     def configure_optimizers(self):
@@ -360,6 +387,16 @@ class ImageEncoder(pl.LightningModule):
         # Forward pass
         im_enc = self.forward(im)
         
+        '''
+        Maybe this should be split up.. Forward() should do the im_enc & pred.
+        If pred not needed, forward() just doesnt do it and returns None. 
+
+        Then this function just becomes the CL loss function.
+        Another becomes loss for prediction. 
+
+        Then train/val/test step just calls forward() and the loss function.
+        
+        '''
         ## Calculate distance between pairs of images and pairs of presence vectors
         dist_array_ims = torch.zeros(curr_batch_size * (curr_batch_size - 1) // 2)
         dist_array_pres = torch.zeros_like(dist_array_ims)
@@ -378,46 +415,81 @@ class ImageEncoder(pl.LightningModule):
                     assert False, f'Distance metric {self.pecl_distance_metric} not implemented.'
         loss_array = torch.abs(dist_array_ims - dist_array_pres)  # L1 loss
         loss = torch.mean(loss_array)
-        return loss
+        return loss, im_enc
     
     def pred_pass(self, batch):
         '''Only trains the prediction model, not the encoding model.'''
         im, pres_vec = batch
         
         # Forward pass
-        with torch.no_grad():  # Don't train encoding model here. 
+        if self.train_im_enc_during_pred:
             im_enc = self.forward(im)
+        else:
+            with torch.no_grad():  # Don't train encoding model here. 
+                im_enc = self.forward(im)
         pres_pred = self.prediction_model(im_enc)
-        loss = F.mse_loss(pres_pred, pres_vec) 
-        return loss
-    
-    def pred_pass_incl_encoding_model(self, batch):
-        '''Trains the prediction model and encoding model (but using regular SL back-prop, not PECL).'''
-        im, pres_vec = batch
-        
-        # Forward pass
-        im_enc = self.forward(im)
-        pres_pred = self.prediction_model(im_enc)
-        loss = F.mse_loss(pres_pred, pres_vec) 
-        return loss
+        loss = F.mse_loss(pres_pred, pres_vec)
+        # loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
+        return loss, im_enc
                 
     def training_step(self, batch, batch_idx):
-        loss = self.forward_pass(batch)
+        loss, _ = self.forward_pass(batch)
         self.log('train_loss', loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            loss = self.forward_pass(batch)
+            loss, im_enc = self.forward_pass(batch)
             self.log('val_loss', loss)
+            pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
+            pres_vec = batch[1]
+            assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
+            for k in [5, 10, 20]:
+                top_k_acc = self.top_k_accuracy(preds=pres_pred, target=pres_vec, k=k)
+                self.log(f'val_top_{k}_acc', top_k_acc)
+            mse_loss = F.mse_loss(pres_pred, pres_vec)
+            self.log(f'val_mse_loss', mse_loss)
+            mae_loss = nn.L1Loss()(pres_pred, pres_vec)
+            self.log(f'val_mae_loss', mae_loss)
+            ce_loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
+            self.log(f'val_ce_loss', ce_loss)
             return loss
     
     def test_step(self, batch, batch_idx):
         with torch.no_grad():
-            loss = self.forward_pass(batch)
+            loss, _ = self.forward_pass(batch)
             self.log('test_loss', loss)
             return loss
         
+    def top_k_accuracy(self, preds, target, k=1):
+        '''Calculate top-k accuracy: the proportion of samples where the target class is within the top k predicted classes.'''
+        assert preds.shape == target.shape
+        inds_sorted_preds = torch.argsort(preds, dim=1, descending=True)  # dim =1; sort along 2nd dimension (ie per sample)
+        inds_sorted_target = torch.argsort(target, dim=1, descending=True)
+        len_batch = preds.shape[0]
+        
+        ## Calculate top-k accuracy using tmp binary vectors that are 1 for the top-k predictions
+        tmp_pred_greater_th = torch.zeros_like(preds)
+        tmp_target_greater_th = torch.zeros_like(target)
+        for row in range(len_batch):
+            tmp_pred_greater_th[row, inds_sorted_preds[row, :k]] = 1
+            tmp_target_greater_th[row, inds_sorted_target[row, :k]] = 1
+
+        assert tmp_pred_greater_th.sum() <= k * len_batch, tmp_pred_greater_th.sum() 
+        assert tmp_target_greater_th.sum() <= k * len_batch, tmp_target_greater_th.sum()
+
+        tmp_joint = tmp_pred_greater_th * tmp_target_greater_th
+        n_present = torch.sum(tmp_joint, dim=1)  ## sum per batch sample
+
+        for n in n_present:
+            assert n <= k, n_present
+
+        top_k_acc = n_present.float() / k  # accuracy per batch sample 
+        # print(f'top-{k} acc: {top_k_acc}')
+        top_k_acc = top_k_acc.mean()
+
+        return top_k_acc
+
     def save_model(self, folder='/Users/t.vanderplas/models/PECL/', 
                    verbose=1):
         '''Save model'''
@@ -451,9 +523,10 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/',
 
     return model 
 
-def normalised_softmax_distance_batch(batch_embeddings):
+def normalised_softmax_distance_batch(batch_embeddings, temperature=1.0):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
     inner_prod_mat = torch.mm(batch_embeddings, batch_embeddings.t())
+    inner_prod_mat = inner_prod_mat / temperature
     # inner_prod_mat = torch.exp(inner_prod_mat)
     ## upper triangle:
     # elements_upper_triangle = torch.triu(inner_prod_mat, diagonal=1)
@@ -462,13 +535,14 @@ def normalised_softmax_distance_batch(batch_embeddings):
     
     return inner_prod_mat
     
-def train_pecl(n_enc_channels=32, n_layers_mlp=2, 
+def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2, 
                pretrained_resnet=True, freeze_resnet=True,
                resnet_version=18, pecl_distance_metric='cosine',
-               normalise_embedding=None,
+               normalise_embedding=None, n_bands=4,
                training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
                image_folder=None, presence_csv=None, species_process='all',
-               verbose=1, fix_seed=42, use_mps=True):
+               verbose=1, fix_seed=42, use_mps=True,
+               save_model=False):
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
 
@@ -498,7 +572,8 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2,
         print(f'Pytorch version is {torch.__version__}') 
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
-                              shuffle_order_data=True, species_process=species_process)
+                              shuffle_order_data=True, species_process=species_process,
+                              n_bands=n_bands)
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
                           shuffle=True,
@@ -507,14 +582,20 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2,
                         shuffle=False,
                         persistent_workers=True) #drop_last=True, pin_memory=True
 
-    model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, n_bands=4, n_layers_mlp=n_layers_mlp,
-                        pretrained_resnet=pretrained_resnet, freeze_resnet=freeze_resnet,
-                        optimizer_name='Adam', resnet_version=resnet_version,
-                        pecl_distance_metric=pecl_distance_metric,
-                        normalise_embedding=normalise_embedding,
-                        lr=lr,  # batch_size=batch_size, 
-                        training_method=training_method,
-                        verbose=verbose)
+    if model is None:
+        model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, 
+                             n_layers_mlp=n_layers_mlp,
+                            pretrained_resnet=pretrained_resnet, freeze_resnet=freeze_resnet,
+                            optimizer_name='Adam', resnet_version=resnet_version,
+                            pecl_distance_metric=pecl_distance_metric,
+                            normalise_embedding=normalise_embedding,
+                            lr=lr,  n_bands=n_bands,
+                            training_method=training_method,
+                            verbose=verbose)
+    else:
+        assert type(model) == ImageEncoder, f'Expected model to be ImageEncoder, but got {type(model)}'
+        assert model.n_species == ds.n_species, f'Number of species in model {model.n_species} does not match number of species in dataset {ds.n_species}.'
+        assert model.n_enc_channels == n_enc_channels, f'Number of encoding channels in model {model.n_enc_channels} does not match number of encoding channels in dataset {n_enc_channels}.'
     
     # cb_metrics = cl.MetricsCallback()
     callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
@@ -531,4 +612,7 @@ def train_pecl(n_enc_channels=32, n_layers_mlp=2,
 
     timestamp_end = datetime.datetime.now()
     print(f'-- Finished training at {timestamp_end}.')
+
+    if save_model:
+        model.save_model(verbose=1)
     return model, (train_dl, val_dl)
