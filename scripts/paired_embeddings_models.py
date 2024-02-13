@@ -52,13 +52,38 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
 class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
-                 species_process='all', n_bands=4,
-                 augment_image=False, verbose=1):
+                 species_process='all', n_bands=4, zscore_im=False,
+                 augment_image=True, verbose=1):
         super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
         self.presence_csv = presence_csv
         self.verbose = verbose
         self.normalise_image = True
+        self.zscore_im = zscore_im
+        if self.zscore_im:
+            ## values from segmentation models pytorch:  tmp = smp.encoders.get_preprocessing_fn(model_name, pretrained='imagenet'), print(tmp.keywords['mean'], tmp.keywords['std'])
+            rgb_means = [0.485, 0.456, 0.406]
+            rgb_std = [0.229, 0.224, 0.225]
+            if n_bands == 4:
+                rgb_means.append(rgb_means[0])
+                rgb_std.append(rgb_std[0])
+
+            ## in np format:
+            self.norm_means = np.array(rgb_means)[:, None, None].astype(np.float32)  # get into right dimensions
+            self.norm_std = np.array(rgb_std)[:, None, None].astype(np.float32)  # get into right dimensions
+
+            ## in torch format:
+            # rgb_means = torch.tensor(np.array(rgb_means)[:, None, None])  # get into right dimensions
+            # rgb_std = torch.tensor(np.array(rgb_std)[:, None, None])  # get into right dimensions
+
+            # dtype = torch.float32
+
+            # ## Change to consistent dtype:
+            # self.norm_means = rgb_means.type(dtype)
+            # self.norm_std = rgb_std.type(dtype)
+        else:
+            self.norm_means = None
+            self.norm_std = None
         self.augment_image = augment_image
         self.shuffle_order_data = shuffle_order_data
         self.species_process = species_process
@@ -155,7 +180,17 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.species_list = [x for x in df_presence.columns if x not in cols_not_species]
         self.df_presence = df_presence
         self.n_species = len(self.species_list)
-    
+
+        ## determine weights:
+        total = self.df_presence[self.species_list].sum().sum()
+        self.weights = 1 / (self.df_presence[self.species_list].sum(0) / total)
+        ## clip:
+        self.weights = np.clip(self.weights, np.percentile(self.weights, 5), np.percentile(self.weights, 75))
+        self.weights = self.weights / np.min(self.weights)
+        assert np.all(self.weights.index == self.species_list), f'Index of weights {self.weights.index} does not match species list {self.species_list}.'
+        # self.weights_values = torch.tensor(self.weights.values).float()
+        self.weights_values = self.weights.values
+
     def find_image_path(self, name_loc):
         im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images}'
         im_file_path = os.path.join(self.image_folder, im_file_name)
@@ -175,20 +210,16 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         if self.normalise_image:
             im = np.clip(im, 0, 3000)
             im = im / 3000.0
-            # im = self.zscore_image(im)
+        if self.zscore_im:
+            im = self.zscore_image(im)
         return im
 
     def zscore_image(self, im):
-        '''Apply preprocessing function to a single image. 
-        Adapted from lca.apply_zscore_preprocess_images() but more specific/faster.
-        
-        What would be much faster, would be to store the data already pre-processed, but
-        what function to use depends on the Network.'''
-        assert False, 'means and std not implemented yet.'
-        im = (im - self.means) / self.std
+        '''Apply preprocessing function to a single image. '''
+        im = (im - self.norm_means) / self.norm_std
         return im
 
-    def transform_data(self, im, mask):
+    def transform_data(self, im):
         '''https://discuss.pytorch.org/t/torchvision-transfors-how-to-perform-identical-transform-on-both-image-and-target/10606/7'''
         # Random horizontal flipping
         if random.random() > 0.5:
@@ -271,9 +302,10 @@ class ImageEncoder(pl.LightningModule):
                  pretrained_resnet=True, freeze_resnet=True,
                  optimizer_name='Adam', resnet_version=18,
                  pecl_distance_metric='cosine',
-                 lr=1e-3, #  batch_size=16, 
+                 pred_train_loss='mse', class_weights=None,
+                 lr=1e-3, 
                  training_method='pecl',
-                 normalise_embedding=None,
+                 normalise_embedding=None, use_mps=True,
                  verbose=1):
         super(ImageEncoder, self).__init__()
         self.n_species = n_species
@@ -287,22 +319,43 @@ class ImageEncoder(pl.LightningModule):
         self.n_layers_mlp = n_layers_mlp
         self.pecl_distance_metric = pecl_distance_metric
         self.optimizer_name = optimizer_name
+        self.use_mps = use_mps
         self.normalise_embedding = normalise_embedding
+        if class_weights is not None:
+            assert class_weights.ndim == 1, f'Class weights shape {class_weights.shape} not 1D.'
+            assert class_weights.shape[0] == n_species, f'Class weights shape {class_weights.shape} does not match number of species {n_species}.'
+            self.class_weights = torch.tensor(class_weights).float() 
+            print(f'Loaded {self.class_weights.shape[0]} class weights on {self.class_weights.device}.')
+            if self.use_mps:
+                self.class_weights = self.class_weights.to('mps')
+                print(f'Class weights on {self.class_weights.device}.')
+        else:
+            print('No class weights.')
+            self.class_weights = None
         self.description = f'ImageEncoder with {n_enc_channels} encoding channels, {n_bands} bands, {n_species} species, {n_layers_mlp} MLP layers, {resnet_version} Resnet, {pecl_distance_metric} distance metric, {training_method} training method.'
-
+        self.df_metrics = None 
         self.build_model()
 
         self.train_im_enc_during_pred = False
         if training_method == 'pecl':
             self.forward_pass = self.pecl_pass
+            self.pred_train_loss = None
+            self.name_train_loss = f'pecl-{pecl_distance_metric}'
         elif training_method == 'pred':
             self.forward_pass = self.pred_pass
+            self.pred_train_loss = pred_train_loss
+            self.name_train_loss = f'pred-{pred_train_loss}'
         elif training_method == 'pred_incl_enc':
             self.forward_pass = self.pred_pass
+            self.pred_train_loss = pred_train_loss
+            self.name_train_loss = f'pred-{pred_train_loss}'
             self.train_im_enc_during_pred = True
         else:
             assert False, f'Training method {training_method} not implemented.'
        
+        if self.pred_train_loss == 'weighted-bce':
+            assert self.class_weights is not None, 'Class weights not set.'
+
     def __str__(self) -> str:
         return super().__str__() + f' {self.description}'
     
@@ -428,19 +481,29 @@ class ImageEncoder(pl.LightningModule):
             with torch.no_grad():  # Don't train encoding model here. 
                 im_enc = self.forward(im)
         pres_pred = self.prediction_model(im_enc)
-        loss = F.mse_loss(pres_pred, pres_vec)
-        # loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
+        if self.pred_train_loss == 'mse':
+            loss = F.mse_loss(pres_pred, pres_vec)
+        elif self.pred_train_loss == 'mae':
+            loss = nn.L1Loss()(pres_pred, pres_vec)
+        elif self.pred_train_loss == 'ce':
+            loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
+        elif self.pred_train_loss == 'bce':
+            loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
+        elif self.pred_train_loss == 'weighted-bce':
+            loss = self.weighted_bce_loss(pres_pred, pres_vec)
+        else:
+            assert False, f'Prediction training loss {self.pred_train_loss} not implemented.'
         return loss, im_enc
                 
     def training_step(self, batch, batch_idx):
         loss, _ = self.forward_pass(batch)
-        self.log('train_loss', loss)
+        self.log(f'train_{self.name_train_loss}_loss', loss)
         return loss
     
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
             loss, im_enc = self.forward_pass(batch)
-            self.log('val_loss', loss)
+            self.log(f'val_{self.name_train_loss}_loss', loss)
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
             pres_vec = batch[1]
             assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
@@ -453,14 +516,27 @@ class ImageEncoder(pl.LightningModule):
             self.log(f'val_mae_loss', mae_loss)
             ce_loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
             self.log(f'val_ce_loss', ce_loss)
+            bce_loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
+            self.log(f'val_bce_loss', bce_loss)
+            bce_weighted_loss = self.weighted_bce_loss(pres_pred, pres_vec)
+            self.log(f'val_weighted-bce_loss', bce_weighted_loss)
             return loss
     
     def test_step(self, batch, batch_idx):
         with torch.no_grad():
             loss, _ = self.forward_pass(batch)
-            self.log('test_loss', loss)
+            self.log(f'test_{self.name_train_loss}_loss', loss)
+            assert False, 'Test step not implemented yet: incl accuracy/loss metrics from validation step.'
             return loss
-        
+    
+    def weighted_bce_loss(self, preds, target):
+        '''Weighted binary cross entropy loss.'''
+        assert preds.shape == target.shape
+        assert self.class_weights is not None, 'Class weights not set.'
+        intermediate_loss = nn.BCELoss(reduction='none')(preds, target)
+        loss = torch.mean(intermediate_loss * self.class_weights)
+        return loss
+
     def top_k_accuracy(self, preds, target, k=1):
         '''Calculate top-k accuracy: the proportion of samples where the target class is within the top k predicted classes.'''
         assert preds.shape == target.shape
@@ -485,14 +561,42 @@ class ImageEncoder(pl.LightningModule):
             assert n <= k, n_present
 
         top_k_acc = n_present.float() / k  # accuracy per batch sample 
-        # print(f'top-{k} acc: {top_k_acc}')
         top_k_acc = top_k_acc.mean()
 
         return top_k_acc
+    
+    def store_metrics(self, metrics):
+        assert self.df_metrics is None, 'Metrics already stored.'
+        self.n_epochs_converged = len(metrics) 
+        metrics_float = []
+        self.set_metric_names = set()
+        for ii in range(len(metrics)):
+            metrics_float.append({})
+            for key in metrics[ii].keys():
+                self.set_metric_names.add(key)
+                value = metrics[ii][key]
+                if type(value) == float:
+                    continue 
+                if type(value) == torch.Tensor:
+                    metrics_float[ii][key] = value.detach().cpu().numpy()
+                assert type(metrics_float[ii][key]) == np.ndarray, type(metrics_float[ii][key])
+                assert metrics_float[ii][key].shape == (), metrics_float[ii][key]
+                metrics_float[ii][key] = float(metrics_float[ii][key])
+
+        self.metric_arrays = {}
+        for key in self.set_metric_names:
+            self.metric_arrays[key] = np.zeros(self.n_epochs_converged) + np.nan
+            for ii in range(self.n_epochs_converged):
+                if key in metrics_float[ii]:
+                    self.metric_arrays[key][ii] = metrics_float[ii][key]
+         
+        self.df_metrics = pd.DataFrame(self.metric_arrays)
+        return 
 
     def save_model(self, folder='/Users/t.vanderplas/models/PECL/', 
                    verbose=1):
         '''Save model'''
+        assert self.df_metrics is not None, 'Metrics not stored yet.' 
         ## Save v_num that is used for tensorboard
         self.v_num = self.logger.version
         ## Save logging directory that is used for tensorboard
@@ -516,7 +620,7 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/',
     with open(os.path.join(folder, filename), 'rb') as f:
         model = pickle.load(f)
 
-    if verbose > 0:  # print some info
+    if verbose > 0:  
         print(f'Loaded {model}')
         if hasattr(model, 'description') and verbose > 0:
             print(model.description)
@@ -538,7 +642,8 @@ def normalised_softmax_distance_batch(batch_embeddings, temperature=1.0):
 def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2, 
                pretrained_resnet=True, freeze_resnet=True,
                resnet_version=18, pecl_distance_metric='cosine',
-               normalise_embedding=None, n_bands=4,
+               pred_train_loss='mse', use_class_weights=False,
+               normalise_embedding=None, n_bands=4, zscore_im=False,
                training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
                image_folder=None, presence_csv=None, species_process='all',
                verbose=1, fix_seed=42, use_mps=True,
@@ -573,7 +678,7 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              n_bands=n_bands)
+                              n_bands=n_bands, zscore_im=zscore_im)
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
                           shuffle=True,
@@ -584,12 +689,13 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
 
     if model is None:
         model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, 
-                             n_layers_mlp=n_layers_mlp,
+                             n_layers_mlp=n_layers_mlp, pred_train_loss=pred_train_loss, 
                             pretrained_resnet=pretrained_resnet, freeze_resnet=freeze_resnet,
                             optimizer_name='Adam', resnet_version=resnet_version,
+                            class_weights=ds.weights_values if use_class_weights else None,
                             pecl_distance_metric=pecl_distance_metric,
                             normalise_embedding=normalise_embedding,
-                            lr=lr,  n_bands=n_bands,
+                            lr=lr, n_bands=n_bands, use_mps=use_mps,
                             training_method=training_method,
                             verbose=verbose)
     else:
@@ -597,9 +703,10 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
         assert model.n_species == ds.n_species, f'Number of species in model {model.n_species} does not match number of species in dataset {ds.n_species}.'
         assert model.n_enc_channels == n_enc_channels, f'Number of encoding channels in model {model.n_enc_channels} does not match number of encoding channels in dataset {n_enc_channels}.'
     
-    # cb_metrics = cl.MetricsCallback()
-    callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
-                                            filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}")]
+    cb_metrics = MetricsCallback()
+    callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_mse_loss', save_top_k=1, mode='min',
+                                            filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}"),
+                 cb_metrics]
 
     trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use,
                          log_every_n_steps=10,  # train loss logging steps (each step = 1 batch)
@@ -613,6 +720,20 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
     timestamp_end = datetime.datetime.now()
     print(f'-- Finished training at {timestamp_end}.')
 
+    model.store_metrics(metrics=cb_metrics.metrics)
     if save_model:
         model.save_model(verbose=1)
-    return model, (train_dl, val_dl)
+    return model, (train_dl, val_dl, trainer)
+
+class MetricsCallback(pl.Callback):
+    """PyTorch Lightning metric callback.
+    https://lightning.ai/forums/t/how-to-access-the-logged-results-such-as-losses/155
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.metrics = []
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        each_me = copy.deepcopy(trainer.callback_metrics)
+        self.metrics.append(each_me)
