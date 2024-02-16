@@ -435,7 +435,6 @@ class ImageEncoder(pl.LightningModule):
     def pecl_pass(self, batch):
         '''Train the encoding model using the PECL method.'''
         im, pres_vec = batch
-        curr_batch_size = len(im)  # would normally be self.batch_size, but last batch might be smaller
         
         # Forward pass
         im_enc = self.forward(im)
@@ -450,26 +449,27 @@ class ImageEncoder(pl.LightningModule):
         Then train/val/test step just calls forward() and the loss function.
         
         '''
-        ## Calculate distance between pairs of images and pairs of presence vectors
-        dist_array_ims = torch.zeros(curr_batch_size * (curr_batch_size - 1) // 2)
-        dist_array_pres = torch.zeros_like(dist_array_ims)
-        ind_pair = -1
-        for i in range(curr_batch_size):
-            for j in range(i + 1, curr_batch_size):  # avoid duplicates
-                ind_pair += 1
-                # print(ind_pair, i, j, im[i].shape, im[j].shape, im_enc[i].shape, im_enc[j].shape)
-                if self.pecl_distance_metric == 'cosine':
-                    dist_array_ims[ind_pair] = 1 - F.cosine_similarity(im_enc[i], im_enc[j], dim=0)
-                    dist_array_pres[ind_pair] = 1 - F.cosine_similarity(pres_vec[i], pres_vec[j], dim=0)
-                elif self.pecl_distance_metric == 'euclidean':
-                    dist_array_ims[ind_pair] = F.pairwise_distance(im_enc[i], im_enc[j], p=2)
-                    dist_array_pres[ind_pair] = F.pairwise_distance(pres_vec[i], pres_vec[j], p=2)
-                else:
-                    assert False, f'Distance metric {self.pecl_distance_metric} not implemented.'
-        loss_array = torch.abs(dist_array_ims - dist_array_pres)  # L1 loss
-        loss = torch.mean(loss_array)
+        if self.pecl_distance_metric == 'softmax':
+            dist_array_ims = normalised_softmax_distance_batch(im_enc)
+            dist_array_pres = normalised_softmax_distance_batch(pres_vec)
+        
+            ## cross entropy loss
+            # loss = F.cross_entropy(dist_array_ims, dist_array_pres)
+            assert (dist_array_ims >= 0).all(), (dist_array_ims, im_enc)
+            assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
+            assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
+            assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
+            loss = -torch.mean(dist_array_ims * torch.log(dist_array_pres + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
+            assert loss >= 0, loss
+        else:
+            dist_array_ims = calculate_similarity_batch(im_enc, distance_metric=self.pecl_distance_metric)
+            dist_array_pres = calculate_similarity_batch(pres_vec, distance_metric=self.pecl_distance_metric)
+            
+            loss_array = torch.abs(dist_array_ims - dist_array_pres)  # L1 loss
+            loss = torch.mean(loss_array)
+
         return loss, im_enc
-    
+
     def pred_pass(self, batch):
         '''Only trains the prediction model, not the encoding model.'''
         im, pres_vec = batch
@@ -489,7 +489,7 @@ class ImageEncoder(pl.LightningModule):
             loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
         elif self.pred_train_loss == 'bce':
             loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
-        elif self.pred_train_loss == 'weighted-bce':
+        elif self.pred_train_loss == 'weighted-bce' and self.class_weights is not None:
             loss = self.weighted_bce_loss(pres_pred, pres_vec)
         else:
             assert False, f'Prediction training loss {self.pred_train_loss} not implemented.'
@@ -518,8 +518,9 @@ class ImageEncoder(pl.LightningModule):
             self.log(f'val_ce_loss', ce_loss)
             bce_loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
             self.log(f'val_bce_loss', bce_loss)
-            bce_weighted_loss = self.weighted_bce_loss(pres_pred, pres_vec)
-            self.log(f'val_weighted-bce_loss', bce_weighted_loss)
+            if self.class_weights is not None:
+                bce_weighted_loss = self.weighted_bce_loss(pres_pred, pres_vec)
+                self.log(f'val_weighted-bce_loss', bce_weighted_loss)
             return loss
     
     def test_step(self, batch, batch_idx):
@@ -533,7 +534,7 @@ class ImageEncoder(pl.LightningModule):
         '''Weighted binary cross entropy loss.'''
         assert preds.shape == target.shape
         assert self.class_weights is not None, 'Class weights not set.'
-        intermediate_loss = nn.BCELoss(reduction='none')(preds, target)
+        intermediate_loss = nn.BCELoss(reduction='none')(preds, target)  #TODO: add mean over just batch dimension here?
         loss = torch.mean(intermediate_loss * self.class_weights)
         return loss
 
@@ -627,18 +628,43 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/',
 
     return model 
 
-def normalised_softmax_distance_batch(batch_embeddings, temperature=1.0):
+def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_denominator=True,
+                                      flatten=True):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
-    inner_prod_mat = torch.mm(batch_embeddings, batch_embeddings.t())
+    assert temperature > 0, f'Temperature {temperature} should be > 0.'
+    assert samples.ndim == 2, f'Expected 2D tensor, but got {samples.ndim}D tensor.'  # (batch, features)
+    inner_prod_mat = torch.mm(samples, samples.t())
     inner_prod_mat = inner_prod_mat / temperature
-    # inner_prod_mat = torch.exp(inner_prod_mat)
-    ## upper triangle:
-    # elements_upper_triangle = torch.triu(inner_prod_mat, diagonal=1)
-    # sum_upper_triangle = torch.sum(elements_upper_triangle)
-    # inner_prod_mat = inner_prod_mat / sum_upper_triangle
-    
+    inner_prod_mat = torch.clamp(torch.exp(inner_prod_mat), max=1e6)
+    if exclude_diag_in_denominator:
+        diag = torch.diag(inner_prod_mat)
+        sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1) - diag
+    else:
+        sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
+    sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
+    inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
+    if flatten:
+        inds_upper_triu = torch.triu_indices(inner_prod_mat.shape[0], inner_prod_mat.shape[1], offset=1)
+        inner_prod_mat = inner_prod_mat[inds_upper_triu[0], inds_upper_triu[1]]
     return inner_prod_mat
     
+def calculate_similarity_batch(samples, distance_metric='cosine'):
+    curr_batch_size = len(samples)
+    ## Calculate distance between pairs of images and pairs of presence vectors
+    similarity_array_samples = torch.zeros(curr_batch_size * (curr_batch_size - 1) // 2)
+    ind_pair = -1
+    for i in range(curr_batch_size):
+        for j in range(i + 1, curr_batch_size):  # avoid duplicates
+            ind_pair += 1
+            # print(ind_pair, i, j, samples[i].shape, samples[j].shape)
+            if distance_metric == 'cosine':
+                similarity_array_samples[ind_pair] = 1 - F.cosine_similarity(samples[i], samples[j], dim=0)
+            elif distance_metric == 'euclidean':
+                similarity_array_samples[ind_pair] = F.pairwise_distance(samples[i], samples[j], p=2)
+            else:
+                assert False, f'Distance metric {distance_metric} not implemented.'
+    return similarity_array_samples
+
 def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2, 
                pretrained_resnet=True, freeze_resnet=True,
                resnet_version=18, pecl_distance_metric='cosine',
