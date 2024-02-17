@@ -438,7 +438,9 @@ class ImageEncoder(pl.LightningModule):
         
         # Forward pass
         im_enc = self.forward(im)
-        
+        if self.normalise_embedding == 'l2':
+            pres_vec = F.normalize(pres_vec, p=2, dim=1)
+
         '''
         Maybe this should be split up.. Forward() should do the im_enc & pred.
         If pred not needed, forward() just doesnt do it and returns None. 
@@ -449,17 +451,26 @@ class ImageEncoder(pl.LightningModule):
         Then train/val/test step just calls forward() and the loss function.
         
         '''
+        use_knn = True
         if self.pecl_distance_metric == 'softmax':
-            dist_array_ims = normalised_softmax_distance_batch(im_enc)
-            dist_array_pres = normalised_softmax_distance_batch(pres_vec)
-        
+            if use_knn is False:
+                dist_array_ims = normalised_softmax_distance_batch(im_enc)
+                dist_array_pres = normalised_softmax_distance_batch(pres_vec)
+            else:
+                dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=False)
+                dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=False, knn=3)
+
+                inds_one = torch.where(dist_array_pres)
+                dist_array_ims = dist_array_ims[inds_one]
+                dist_array_pres = dist_array_pres[inds_one]
+
             ## cross entropy loss
             # loss = F.cross_entropy(dist_array_ims, dist_array_pres)
             assert (dist_array_ims >= 0).all(), (dist_array_ims, im_enc)
             assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
             assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
-            loss = -torch.mean(dist_array_ims * torch.log(dist_array_pres + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
+            loss = -torch.mean(dist_array_pres * torch.log(dist_array_ims + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
             assert loss >= 0, loss
         else:
             dist_array_ims = calculate_similarity_batch(im_enc, distance_metric=self.pecl_distance_metric)
@@ -629,20 +640,35 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/',
     return model 
 
 def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_denominator=True,
-                                      flatten=True):
+                                      flatten=True, knn=None, knn_hard_labels=False):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
     assert temperature > 0, f'Temperature {temperature} should be > 0.'
     assert samples.ndim == 2, f'Expected 2D tensor, but got {samples.ndim}D tensor.'  # (batch, features)
+    assert (samples <= 1).all(), f'Values should be <= 1, but got {samples.max()}'
     inner_prod_mat = torch.mm(samples, samples.t())
+    
     inner_prod_mat = inner_prod_mat / temperature
-    inner_prod_mat = torch.clamp(torch.exp(inner_prod_mat), max=1e6)
+    inner_prod_mat = torch.exp(inner_prod_mat)
+    sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
     if exclude_diag_in_denominator:
         diag = torch.diag(inner_prod_mat)
-        sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1) - diag
-    else:
-        sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
+        sum_inner_prod_mat = sum_inner_prod_mat - diag
     sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
     inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
+    if knn is not None:
+        assert flatten is False, 'Flatten should be False if KNN is used.'
+        assert type(knn) == int, f'Expected int for knn, but got {type(knn)}'
+        assert knn > 0, f'Expected knn > 0, but got {knn}'
+        assert knn < samples.shape[0] - 1, f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}'
+        inner_prod_mat = inner_prod_mat - torch.diag(inner_prod_mat.diag())  # set diagonal to 0 so it doesn't get picked with KNN
+        knn_inner_prod_mat = torch.zeros_like(inner_prod_mat)
+        inds_positive = torch.topk(inner_prod_mat, k=knn, dim=1, largest=True, sorted=False)[1]
+        if knn_hard_labels:
+            knn_inner_prod_mat.scatter_(1, inds_positive, 1)
+        else:
+            for row, cols in enumerate(inds_positive):
+                knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols]
+        return knn_inner_prod_mat
     if flatten:
         inds_upper_triu = torch.triu_indices(inner_prod_mat.shape[0], inner_prod_mat.shape[1], offset=1)
         inner_prod_mat = inner_prod_mat[inds_upper_triu[0], inds_upper_triu[1]]
@@ -749,7 +775,7 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
     model.store_metrics(metrics=cb_metrics.metrics)
     if save_model:
         model.save_model(verbose=1)
-    return model, (train_dl, val_dl, trainer)
+    return model, (train_dl, val_dl)
 
 class MetricsCallback(pl.Callback):
     """PyTorch Lightning metric callback.
