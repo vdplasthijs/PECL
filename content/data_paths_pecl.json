@@ -9,7 +9,9 @@
       "home": "/Users/t.vanderplas/",
       "repo": "/Users/t.vanderplas/repos/PECL/",
       "data_folder": "/Users/t.vanderplas/data/UKBMS_sent2_ds/",
-      "ukbms_full_dataset": "/Users/t.vanderplas/data/gbif/0047997-231120084113126.zip"
+      "ukbms_full_dataset": "/Users/t.vanderplas/data/gbif/0047997-231120084113126.zip",
+      "seco_resnet50_1m": "/Users/t.vanderplas/data/seco/seco_resnet50_1m.ckpt",
+      "seco_resnet18_1m": "/Users/t.vanderplas/data/seco/seco_resnet18_1m.ckpt"
               }
     }
 }

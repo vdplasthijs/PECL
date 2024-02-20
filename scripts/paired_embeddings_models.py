@@ -34,6 +34,7 @@ from pytorch_lightning import loggers as pl_loggers
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
 import create_dataset_utils as cdu 
+from load_seco_resnet import map_seco_to_torchvision_weights
 
 def load_tiff(tiff_file_path, datatype='np', verbose=0):
     '''Load tiff file as np or da'''
@@ -68,29 +69,6 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
             self.norm_means = self.norm_means[:, None, None]
             self.norm_std = self.norm_std[:, None, None]
-
-            #############
-            # ## values from segmentation models pytorch:  tmp = smp.encoders.get_preprocessing_fn(model_name, pretrained='imagenet'), print(tmp.keywords['mean'], tmp.keywords['std'])
-            # rgb_means = [0.485, 0.456, 0.406]
-            # rgb_std = [0.229, 0.224, 0.225]
-            # if n_bands == 4:
-            #     rgb_means.append(rgb_means[0])
-            #     rgb_std.append(rgb_std[0])
-
-            # ## in np format:
-            # self.norm_means = np.array(rgb_means)[:, None, None].astype(np.float32)  # get into right dimensions
-            # self.norm_std = np.array(rgb_std)[:, None, None].astype(np.float32)  # get into right dimensions
-
-            ################
-            ## in torch format:
-            # rgb_means = torch.tensor(np.array(rgb_means)[:, None, None])  # get into right dimensions
-            # rgb_std = torch.tensor(np.array(rgb_std)[:, None, None])  # get into right dimensions
-
-            # dtype = torch.float32
-
-            # ## Change to consistent dtype:
-            # self.norm_means = rgb_means.type(dtype)
-            # self.norm_std = rgb_std.type(dtype)
         else:
             self.norm_means = None
             self.norm_std = None
@@ -293,7 +271,6 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             pass
         else:
             assert False, f'Number of bands {len(im)} not implemented.'
-        ## to numpy 
         im = im.numpy()
 
         if ax is None:
@@ -348,31 +325,36 @@ class ImageEncoder(pl.LightningModule):
     }
 
     def __init__(self, n_species=62, n_enc_channels=32, n_bands=4, n_layers_mlp=2,
-                 pretrained_resnet=True, freeze_resnet=True,
+                 pretrained_resnet='imagenet', freeze_resnet=True,
                  optimizer_name='Adam', resnet_version=18,
                  pecl_distance_metric='cosine',
                  pred_train_loss='mse', class_weights=None,
                  lr=1e-3, pecl_knn=5, pecl_knn_hard_labels=False,
                  training_method='pecl',
-                 normalise_embedding=None, use_mps=True,
+                 normalise_embedding='l2', use_mps=True,
+                 use_lr_scheduler=False,
                  verbose=1):
         super(ImageEncoder, self).__init__()
         self.save_hyperparameters()
         self.n_species = n_species
         self.n_enc_channels = n_enc_channels
         self.n_bands = n_bands
+        assert self.n_bands in [3, 4], f'Number of bands {self.n_bands} not implemented.'
         self.verbose = verbose
         self.pretrained_resnet = pretrained_resnet
         self.freeze_resnet = freeze_resnet
         self.lr = lr
         self.resnet_version = resnet_version
         self.n_layers_mlp = n_layers_mlp
+        assert self.n_layers_mlp in [1, 2], f'Number of MLP layers {self.n_layers_mlp} not implemented.'
         self.pecl_distance_metric = pecl_distance_metric
         self.optimizer_name = optimizer_name
         self.use_mps = use_mps
         self.normalise_embedding = normalise_embedding
+        assert self.normalise_embedding == 'l2', 'Currently expecting l2 normalisation'
         self.pecl_knn = pecl_knn
         self.pecl_knn_hard_labels = pecl_knn_hard_labels
+        self.use_lr_scheduler = use_lr_scheduler
         if class_weights is not None:
             assert class_weights.ndim == 1, f'Class weights shape {class_weights.shape} not 1D.'
             assert class_weights.shape[0] == n_species, f'Class weights shape {class_weights.shape} does not match number of species {n_species}.'
@@ -380,7 +362,7 @@ class ImageEncoder(pl.LightningModule):
             print(f'Loaded {self.class_weights.shape[0]} class weights on {self.class_weights.device}.')
             if self.use_mps:
                 self.class_weights = self.class_weights.to('mps')
-                print(f'Class weights on {self.class_weights.device}.')
+                print(f'Class weights now on {self.class_weights.device}.')
         else:
             print('No class weights.')
             self.class_weights = None
@@ -423,7 +405,15 @@ class ImageEncoder(pl.LightningModule):
 
     def build_model(self):
         ## Load Resnet, if needed modify first layer to accept 4 bands
-        self.resnet = self.resnets[self.resnet_version](pretrained=self.pretrained_resnet)
+        if self.pretrained_resnet == 'seco':
+            self.resnet = map_seco_to_torchvision_weights(model=None, device_use='mps' if self.use_mps else 'cpu',
+                                                          resnet_name=f'resnet{self.resnet_version}', verbose=1)
+            self.pretrained_weights_name = f'seco_resnet{self.resnet_version}_1m'
+            print('Loaded Resnet with SeCo weights.')
+        else:
+            self.pretrained_weights_name = "IMAGENET1K_V1"
+            self.resnet = self.resnets[self.resnet_version](weights=self.pretrained_weights_name)
+            print(f'Loaded Resnet{self.resnet_version} with {self.pretrained_weights_name} weights.')
         if self.n_bands == 3:
             pass 
         elif self.n_bands == 4:  # https://stackoverflow.com/questions/62629114/how-to-modify-resnet-50-with-4-channels-as-input-using-pre-trained-weights-in-py
@@ -476,13 +466,20 @@ class ImageEncoder(pl.LightningModule):
     
     def configure_optimizers(self):
         if self.optimizer_name == 'SGD':
-            self.optimizer = optim.SGD
+            self.optimizer = optim.SGD(self.parameters(), lr=self.lr)
         elif self.optimizer_name == 'Adam':
-            self.optimizer = optim.Adam
+            self.optimizer = optim.Adam(self.parameters(), lr=self.lr)
         else:
             assert False, f'Optimizer {self.optimizer_name} not implemented.'
 
-        return self.optimizer(self.parameters(), lr=self.lr)
+        if self.use_lr_scheduler:
+            print('Using ReduceLROnPlateau scheduler.')
+            scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min', 
+                                                             factor=0.1, patience=10, verbose=True)
+            return {"optimizer": self.optimizer, 
+                    "lr_scheduler": {"scheduler": scheduler, "monitor": "val_loss"}}
+        else:
+            return self.optimizer
     
     def pecl_pass(self, batch):
         '''Train the encoding model using the PECL method.'''
@@ -566,7 +563,8 @@ class ImageEncoder(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
             loss, im_enc = self.forward_pass(batch)
-            self.log(f'val_{self.name_train_loss}_loss', loss)
+            self.log(f'val_{self.name_train_loss}_loss', loss)  # saving name loss function used so it can be recovered later
+            self.log('val_loss', loss)  # also save as val_loss for tensorboard (and lr_scheduler etc)
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
             pres_vec = batch[1]
             assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
@@ -754,13 +752,14 @@ def calculate_similarity_batch(samples, distance_metric='cosine'):
     return similarity_array_samples
 
 def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2, 
-               pretrained_resnet=True, freeze_resnet=True,
+               pretrained_resnet='imagenet', freeze_resnet=True,
                resnet_version=18, pecl_distance_metric='cosine',
                pred_train_loss='mse', use_class_weights=False,
-               normalise_embedding=None, n_bands=4, zscore_im=False,
+               normalise_embedding=None, n_bands=4,
                training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
                image_folder=None, presence_csv=None, species_process='all',
                pecl_knn=5, pecl_knn_hard_labels=False,
+               use_lr_scheduler=False,
                verbose=1, fix_seed=42, use_mps=True,
                save_model=False):
     if fix_seed is not None:
@@ -793,12 +792,12 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              n_bands=n_bands, zscore_im=zscore_im, mode='train')
+                              augment_image=True,
+                              n_bands=n_bands, zscore_im=True, mode='train')
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
     val_ds.dataset.mode = 'val'
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
-                          shuffle=True,
-                          persistent_workers=True) #drop_last=True, pin_memory=True
+                          shuffle=True, persistent_workers=True) #drop_last=True, pin_memory=True
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
                         shuffle=False,  persistent_workers=True) 
 
@@ -812,6 +811,7 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
                             normalise_embedding=normalise_embedding,
                             pecl_knn=pecl_knn, pecl_knn_hard_labels=pecl_knn_hard_labels,
                             lr=lr, n_bands=n_bands, use_mps=use_mps,
+                            use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
                             verbose=verbose)
     else:
