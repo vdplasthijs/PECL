@@ -22,7 +22,8 @@ import torchvision.models as models
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import torchmetrics
-from torchvision import transforms
+from torchvision.transforms import v2
+# from torchvision import transforms
 import torchvision.transforms.functional as TF
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
@@ -52,26 +53,35 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
 class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
-                 species_process='all', n_bands=4, zscore_im=False,
+                 species_process='all', n_bands=4, zscore_im=True,
+                 mode='train',
                  augment_image=True, verbose=1):
         super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
         self.presence_csv = presence_csv
+        self.mode = mode
         self.verbose = verbose
-        self.normalise_image = True
         self.zscore_im = zscore_im
         if self.zscore_im:
-            ## values from segmentation models pytorch:  tmp = smp.encoders.get_preprocessing_fn(model_name, pretrained='imagenet'), print(tmp.keywords['mean'], tmp.keywords['std'])
-            rgb_means = [0.485, 0.456, 0.406]
-            rgb_std = [0.229, 0.224, 0.225]
-            if n_bands == 4:
-                rgb_means.append(rgb_means[0])
-                rgb_std.append(rgb_std[0])
+            ## Values obtained from full data set (1336 images):
+            self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
+            self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
+            self.norm_means = self.norm_means[:, None, None]
+            self.norm_std = self.norm_std[:, None, None]
 
-            ## in np format:
-            self.norm_means = np.array(rgb_means)[:, None, None].astype(np.float32)  # get into right dimensions
-            self.norm_std = np.array(rgb_std)[:, None, None].astype(np.float32)  # get into right dimensions
+            #############
+            # ## values from segmentation models pytorch:  tmp = smp.encoders.get_preprocessing_fn(model_name, pretrained='imagenet'), print(tmp.keywords['mean'], tmp.keywords['std'])
+            # rgb_means = [0.485, 0.456, 0.406]
+            # rgb_std = [0.229, 0.224, 0.225]
+            # if n_bands == 4:
+            #     rgb_means.append(rgb_means[0])
+            #     rgb_std.append(rgb_std[0])
 
+            # ## in np format:
+            # self.norm_means = np.array(rgb_means)[:, None, None].astype(np.float32)  # get into right dimensions
+            # self.norm_std = np.array(rgb_std)[:, None, None].astype(np.float32)  # get into right dimensions
+
+            ################
             ## in torch format:
             # rgb_means = torch.tensor(np.array(rgb_means)[:, None, None])  # get into right dimensions
             # rgb_std = torch.tensor(np.array(rgb_std)[:, None, None])  # get into right dimensions
@@ -129,14 +139,16 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         if self.species_process == 'all':
             pass 
         elif self.species_process == 'priority_species' or self.species_process == 'priority_species_present':
-            priority_species = ['Carterocephalus palaemon', 'Thymelicus acteon', 'Leptidea sinapis',  # 'Leptidea juvernica', 
-                                'Coenonympha tullia',
-                                # 'Boloria euphrosyne', 
-                                'Fabriciana adippe', 'Euphydryas aurinia',
-                                # 'Melitaea athalia', 
-                                'Hamearis lucina',
-                                # 'Phengaris arion',
-                                  'Aricia artaxerxes']  ## From BC 2022 report: These UK Priority Species of butterflies are Chequered Skipper, Lulworth Skipper, Wood White, Cryptic Wood White, Large Heath, Pearl-bordered Fritillary, High Brown Fritillary, Marsh Fritillary, Heath Fritillary, Duke of Burgundy, Large Blue and Northern Brown Argus
+            # priority_species = ['Carterocephalus palaemon', 'Thymelicus acteon', 'Leptidea sinapis',  # 'Leptidea juvernica', 
+            #                     'Coenonympha tullia',
+            #                     # 'Boloria euphrosyne', 
+            #                     'Fabriciana adippe', 'Euphydryas aurinia',
+            #                     # 'Melitaea athalia', 
+            #                     'Hamearis lucina',
+            #                     # 'Phengaris arion',
+            #                       'Aricia artaxerxes']  ## From BC 2022 report: These UK Priority Species of butterflies are Chequered Skipper, Lulworth Skipper, Wood White, Cryptic Wood White, Large Heath, Pearl-bordered Fritillary, High Brown Fritillary, Marsh Fritillary, Heath Fritillary, Duke of Burgundy, Large Blue and Northern Brown Argus
+            priority_species = ['Pararge aegeria', 'Maniola jurtina', 'Coenonympha pamphilus']
+            
             for sp in priority_species:
                 assert sp in original_species_list, f'Indicator species {sp} not found in species list.'
             cols_keep = cols_not_species + priority_species
@@ -207,30 +219,50 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         else:
             assert False, f'Number of bands {self.n_bands} not implemented.'
 
-        if self.normalise_image:
+        if self.zscore_im:
+            im = im.astype(np.int32)
+            im = self.zscore_image(im)
+        else:
+            if self.n_bands == 4:
+                print('WARNING: Clipping image to 0-3000 range, but NIR band average EXCEEDS max value typically.')
             im = np.clip(im, 0, 3000)
             im = im / 3000.0
-        if self.zscore_im:
-            im = self.zscore_image(im)
         return im
 
     def zscore_image(self, im):
-        '''Apply preprocessing function to a single image. '''
+        '''Apply preprocessing function to a single image. 
+        raw_sent2_means = torch.tensor([661.1047,  770.6800,  531.8330, 3228.5588])
+        raw_sent2_stds = torch.tensor([640.2482,  571.8545,  597.3570, 1200.7518])
+        '''
         im = (im - self.norm_means) / self.norm_std
         return im
 
     def transform_data(self, im):
-        '''https://discuss.pytorch.org/t/torchvision-transfors-how-to-perform-identical-transform-on-both-image-and-target/10606/7'''
-        # Random horizontal flipping
-        if random.random() > 0.5:
-            im = TF.hflip(im)
-
-        # Random vertical flipping
-        if random.random() > 0.5:
-            im = TF.vflip(im)
-
+        '''Apply random augmentations to the image.
+        From https://uvadlc-notebooks.readthedocs.io/en/latest/tutorial_notebooks/tutorial17/SimCLR.html
+        '''
+        if self.mode == 'train':
+            augment_transforms = v2.Compose([v2.RandomHorizontalFlip(p=0.5),
+                                         v2.RandomVerticalFlip(p=0.5),  
+                                         v2.RandomResizedCrop(size=224),
+                                        #   v2.RandomApply([
+                                        #       v2.ColorJitter(brightness=0.5,
+                                            #                 contrast=0.5,
+                                            #                 saturation=0.5,
+                                            #                 hue=0.1)
+                                                            # ], p=0.8),
+                                        #   v2.RandomGrayscale(p=0.2),
+                                        #   v2.GaussianBlur(kernel_size=9),
+                                        #   transforms.ToTensor(),
+                                        #   transforms.Normalize((0.5,), (0.5,))
+                                         ])
+            im = augment_transforms(im)
+        elif self.mode == 'val':
+            assert im.shape[1] == im.shape[2] == 256, f'Image shape {im.shape} not 256x256.'
+            im = im[:, 16:240, 16:240]  # Crop to centre 224x224
+        
         return im
-    
+
     def __repr__(self):
         return f"DataSetImagePresence(image_folder={self.image_folder}, presence_csv={self.presence_csv})"
 
@@ -282,6 +314,23 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         ax.set_aspect('equal')
         ax.set_title(f'Image {index} (RGB only)')
 
+    def determine_mean_std_entire_ds(self, max_iter=100):
+        for i_sample, sample in tqdm(enumerate(self)):
+            im, target = sample
+            if i_sample == 0:
+                im_aggr = im[None, ...].clone()
+            else:
+                im_aggr = torch.cat((im_aggr, im[None, ...]), dim=0)
+            if i_sample == max_iter:
+                print(f'Breaking after {max_iter} samples.')
+                break 
+
+        im_aggr.shape
+        mean = im_aggr.mean(dim=(0, 2, 3))
+        std = im_aggr.std(dim=(0, 2, 3))
+        print(mean, std)
+        return mean, std
+
 class ImageEncoder(pl.LightningModule):
     '''
     Encode image using CNN Resnet + FCN.
@@ -303,11 +352,12 @@ class ImageEncoder(pl.LightningModule):
                  optimizer_name='Adam', resnet_version=18,
                  pecl_distance_metric='cosine',
                  pred_train_loss='mse', class_weights=None,
-                 lr=1e-3, 
+                 lr=1e-3, pecl_knn=5, pecl_knn_hard_labels=False,
                  training_method='pecl',
                  normalise_embedding=None, use_mps=True,
                  verbose=1):
         super(ImageEncoder, self).__init__()
+        self.save_hyperparameters()
         self.n_species = n_species
         self.n_enc_channels = n_enc_channels
         self.n_bands = n_bands
@@ -321,6 +371,8 @@ class ImageEncoder(pl.LightningModule):
         self.optimizer_name = optimizer_name
         self.use_mps = use_mps
         self.normalise_embedding = normalise_embedding
+        self.pecl_knn = pecl_knn
+        self.pecl_knn_hard_labels = pecl_knn_hard_labels
         if class_weights is not None:
             assert class_weights.ndim == 1, f'Class weights shape {class_weights.shape} not 1D.'
             assert class_weights.shape[0] == n_species, f'Class weights shape {class_weights.shape} does not match number of species {n_species}.'
@@ -451,18 +503,18 @@ class ImageEncoder(pl.LightningModule):
         Then train/val/test step just calls forward() and the loss function.
         
         '''
-        use_knn = True
         if self.pecl_distance_metric == 'softmax':
-            if use_knn is False:
-                dist_array_ims = normalised_softmax_distance_batch(im_enc)
-                dist_array_pres = normalised_softmax_distance_batch(pres_vec)
+            if self.pecl_knn is not None:
+                flatten_dist = False
             else:
-                dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=False)
-                dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=False, knn=3)
+                flatten_dist = True
+            dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist)
+            dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
+                                                                knn_hard_labels=self.pecl_knn_hard_labels)
 
-                inds_one = torch.where(dist_array_pres)
-                dist_array_ims = dist_array_ims[inds_one]
-                dist_array_pres = dist_array_pres[inds_one]
+            inds_one = torch.where(dist_array_pres)
+            dist_array_ims = dist_array_ims[inds_one]
+            dist_array_pres = dist_array_pres[inds_one]
 
             ## cross entropy loss
             # loss = F.cross_entropy(dist_array_ims, dist_array_pres)
@@ -518,6 +570,8 @@ class ImageEncoder(pl.LightningModule):
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
             pres_vec = batch[1]
             assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
+            distance_pred_label_means = torch.mean(torch.abs(pres_vec.mean(0) - pres_pred.mean(0)))
+            self.log(f'val_distance_pred_label_means', distance_pred_label_means)
             for k in [5, 10, 20]:
                 top_k_acc = self.top_k_accuracy(preds=pres_pred, target=pres_vec, k=k)
                 self.log(f'val_top_{k}_acc', top_k_acc)
@@ -640,13 +694,21 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/',
     return model 
 
 def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_denominator=True,
-                                      flatten=True, knn=None, knn_hard_labels=False):
+                                      flatten=True, knn=None, knn_hard_labels=False,
+                                      similarity_function='inner'):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
     assert temperature > 0, f'Temperature {temperature} should be > 0.'
     assert samples.ndim == 2, f'Expected 2D tensor, but got {samples.ndim}D tensor.'  # (batch, features)
     assert (samples <= 1).all(), f'Values should be <= 1, but got {samples.max()}'
+    if similarity_function == 'inner':
+        pass
+    elif similarity_function == 'cosine':
+        samples = F.normalize(samples, p=2, dim=1)
+        assert False, 'Cosine similarity not implemented yet.'
+    else:
+        assert False, f'Similarity function {similarity_function} not implemented.'
+
     inner_prod_mat = torch.mm(samples, samples.t())
-    
     inner_prod_mat = inner_prod_mat / temperature
     inner_prod_mat = torch.exp(inner_prod_mat)
     sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
@@ -669,7 +731,7 @@ def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_
             for row, cols in enumerate(inds_positive):
                 knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols]
         return knn_inner_prod_mat
-    if flatten:
+    if flatten:  # only return upper triangular part because of symmetry
         inds_upper_triu = torch.triu_indices(inner_prod_mat.shape[0], inner_prod_mat.shape[1], offset=1)
         inner_prod_mat = inner_prod_mat[inds_upper_triu[0], inds_upper_triu[1]]
     return inner_prod_mat
@@ -698,6 +760,7 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
                normalise_embedding=None, n_bands=4, zscore_im=False,
                training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
                image_folder=None, presence_csv=None, species_process='all',
+               pecl_knn=5, pecl_knn_hard_labels=False,
                verbose=1, fix_seed=42, use_mps=True,
                save_model=False):
     if fix_seed is not None:
@@ -730,14 +793,14 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              n_bands=n_bands, zscore_im=zscore_im)
+                              n_bands=n_bands, zscore_im=zscore_im, mode='train')
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
+    val_ds.dataset.mode = 'val'
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
                           shuffle=True,
                           persistent_workers=True) #drop_last=True, pin_memory=True
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
-                        shuffle=False,
-                        persistent_workers=True) #drop_last=True, pin_memory=True
+                        shuffle=False,  persistent_workers=True) 
 
     if model is None:
         model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, 
@@ -747,6 +810,7 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
                             class_weights=ds.weights_values if use_class_weights else None,
                             pecl_distance_metric=pecl_distance_metric,
                             normalise_embedding=normalise_embedding,
+                            pecl_knn=pecl_knn, pecl_knn_hard_labels=pecl_knn_hard_labels,
                             lr=lr, n_bands=n_bands, use_mps=use_mps,
                             training_method=training_method,
                             verbose=verbose)
