@@ -91,8 +91,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         content_image_folder = os.listdir(self.image_folder)
         locs_images = [x.split('_')[2] for x in content_image_folder]
         suffix_images = np.unique(['_'.join(x.split('_')[3:]) for x in content_image_folder])
-        assert len(suffix_images) == 1, "Multiple suffixes found in image folder."
-        self.suffix_images = suffix_images[0]
+        self.suffix_images = suffix_images
         prefix_images = np.unique([x.split('_')[0] for x in content_image_folder])
         assert len(prefix_images) == 1, "Multiple prefixes found in image folder."
         self.prefix_images = prefix_images[0]
@@ -182,9 +181,17 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.weights_values = self.weights.values
 
     def find_image_path(self, name_loc):
-        im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images}'
-        im_file_path = os.path.join(self.image_folder, im_file_name)
-        return im_file_path
+        
+        if len(self.suffix_images) == 1:
+            im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images[0]}'
+            im_file_path = os.path.join(self.image_folder, im_file_name)
+            return im_file_path
+        else:
+            for s in self.suffix_images:
+                im_file_name = f'{self.prefix_images}_{name_loc}_{s}'
+                im_file_path = os.path.join(self.image_folder, im_file_name)
+                if os.path.exists(im_file_path):
+                    return im_file_path
     
     def load_image(self, name_loc):
         im_file_path = self.find_image_path(name_loc=name_loc)
@@ -201,8 +208,8 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             im = im.astype(np.int32)
             im = self.zscore_image(im)
         else:
-            if self.n_bands == 4:
-                print('WARNING: Clipping image to 0-3000 range, but NIR band average EXCEEDS max value typically.')
+            # if self.n_bands == 4:
+            #     print('WARNING: Clipping image to 0-3000 range, but NIR band average EXCEEDS max value typically.')
             im = np.clip(im, 0, 3000)
             im = im / 3000.0
         return im
@@ -263,8 +270,22 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         pres_vec = torch.tensor(pres_vec.values.astype(np.float32))
         return im, pres_vec
     
-    def plot_image(self, index, ax=None):
+    def plot_image(self, index=None, loc_name=None, ax=None):
+        if loc_name is not None and index is None:
+            if loc_name in self.df_presence['name_loc'].values:
+                index = self.df_presence[self.df_presence['name_loc'] == loc_name].index[0]
+            else:
+                # assert False, f'Location {loc_name} not found.'
+                print( f'Location {loc_name} not found in data set.')
+                return None
+        elif index is not None and loc_name is None:
+            loc_name = self.df_presence.iloc[index]['name_loc']
+        else: 
+            assert False, 'Either index or loc_name must be provided.'
+
+        self.zscore_im = False
         im, pres_vec = self.__getitem__(index)
+        self.zscore_im = True
         if len(im) == 4:
             im = im[0:3]
         elif len(im) == 3:
@@ -289,7 +310,8 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         for sp in ax.spines:
             ax.spines[sp].set_visible(False)
         ax.set_aspect('equal')
-        ax.set_title(f'Image {index} (RGB only)')
+        ax.set_title(f'{loc_name}, id {index}')
+        return ax
 
     def determine_mean_std_entire_ds(self, max_iter=100):
         for i_sample, sample in tqdm(enumerate(self)):
@@ -324,7 +346,8 @@ class ImageEncoder(pl.LightningModule):
         # 152: models.resnet152,
     }
 
-    def __init__(self, n_species=62, n_enc_channels=32, n_bands=4, n_layers_mlp=2,
+    def __init__(self, n_species=62, n_enc_channels=128, n_bands=4, 
+                 n_layers_mlp_resnet=1, n_layers_mlp_pred=1,
                  pretrained_resnet='imagenet', freeze_resnet=True,
                  optimizer_name='Adam', resnet_version=18,
                  pecl_distance_metric='cosine',
@@ -345,8 +368,11 @@ class ImageEncoder(pl.LightningModule):
         self.freeze_resnet = freeze_resnet
         self.lr = lr
         self.resnet_version = resnet_version
-        self.n_layers_mlp = n_layers_mlp
-        assert self.n_layers_mlp in [1, 2], f'Number of MLP layers {self.n_layers_mlp} not implemented.'
+        self.n_layers_mlp_resnet = n_layers_mlp_resnet
+        assert self.n_layers_mlp_resnet == 1, 'Expecting 1 layer MLP for projection head for now.'
+        # assert self.n_layers_mlp_resnet in [1, 2], f'Number of MLP layers {self.n_layers_mlp_resnet} not implemented.'
+        self.n_layers_mlp_pred = n_layers_mlp_pred
+        assert self.n_layers_mlp_pred in [1, 2], 'Expecting 1 or 2 layer MLP for prediction head for now.'
         self.pecl_distance_metric = pecl_distance_metric
         self.optimizer_name = optimizer_name
         self.use_mps = use_mps
@@ -366,7 +392,7 @@ class ImageEncoder(pl.LightningModule):
         else:
             print('No class weights.')
             self.class_weights = None
-        self.description = f'ImageEncoder with {n_enc_channels} encoding channels, {n_bands} bands, {n_species} species, {n_layers_mlp} MLP layers, {resnet_version} Resnet, {pecl_distance_metric} distance metric, {training_method} training method.'
+        self.description = f'ImageEncoder with {n_enc_channels} encoding channels, {n_bands} bands, {n_species} species, {n_layers_mlp_resnet} MLP layers, {resnet_version} Resnet, {pecl_distance_metric} distance metric, {training_method} training method.'
         self.df_metrics = None 
         self.build_model()
 
@@ -387,7 +413,7 @@ class ImageEncoder(pl.LightningModule):
         else:
             assert False, f'Training method {training_method} not implemented.'
        
-        if self.pred_train_loss == 'weighted-bce':
+        if self.pred_train_loss in ['weighted-bce', 'weighted-ce']:
             assert self.class_weights is not None, 'Class weights not set.'
 
     def __str__(self) -> str:
@@ -410,10 +436,16 @@ class ImageEncoder(pl.LightningModule):
                                                           resnet_name=f'resnet{self.resnet_version}', verbose=1)
             self.pretrained_weights_name = f'seco_resnet{self.resnet_version}_1m'
             print('Loaded Resnet with SeCo weights.')
-        else:
+        elif self.pretrained_resnet is None or self.pretrained_resnet == False:
+            self.resnet = self.resnets[self.resnet_version](weights=None)
+            print(f'Loaded Resnet{self.resnet_version} with random weights.')
+        elif self.pretrained_resnet == 'imagenet' or self.pretrained_resnet == True:
             self.pretrained_weights_name = "IMAGENET1K_V1"
             self.resnet = self.resnets[self.resnet_version](weights=self.pretrained_weights_name)
             print(f'Loaded Resnet{self.resnet_version} with {self.pretrained_weights_name} weights.')
+        else:
+            raise ValueError(f'Pretrained resnet {self.pretrained_resnet} not implemented.')
+        
         if self.n_bands == 3:
             pass 
         elif self.n_bands == 4:  # https://stackoverflow.com/questions/62629114/how-to-modify-resnet-50-with-4-channels-as-input-using-pre-trained-weights-in-py
@@ -426,16 +458,16 @@ class ImageEncoder(pl.LightningModule):
             assert False, f'Number of bands {self.n_bands} not implemented.'
 
         ## Modify last layer to output n_enc_channels
-        if self.n_layers_mlp == 1:
+        if self.n_layers_mlp_resnet == 1:
             self.resnet.fc = nn.Linear(self.resnet.fc.in_features, self.n_enc_channels)
-        elif self.n_layers_mlp == 2:
+        elif self.n_layers_mlp_resnet == 2:
             self.resnet.fc = nn.Sequential(
                 nn.Linear(self.resnet.fc.in_features, 512),
                 nn.ReLU(),
                 nn.Linear(512, self.n_enc_channels)
             )
         else:
-            assert False, f'Number of layers {self.n_layers_mlp} not implemented.'    
+            assert False, f'Number of layers {self.n_layers_mlp_resnet} not implemented.'    
 
         ## Freeze Resnet, except for self.resnet.fc, if requested:
         if self.freeze_resnet:
@@ -444,10 +476,18 @@ class ImageEncoder(pl.LightningModule):
                     param.requires_grad = False
 
         ## Prediction model to predict presence/absence from encoded image
-        self.prediction_model = nn.Sequential(
-            nn.Linear(self.n_enc_channels, self.n_species),
-            nn.Sigmoid()
-        )
+        if self.n_layers_mlp_pred == 1:
+            self.prediction_model = nn.Sequential(
+                nn.Linear(self.n_enc_channels, self.n_species),
+                nn.Sigmoid())
+        elif self.n_layers_mlp_pred == 2:
+            self.prediction_model = nn.Sequential(
+                nn.Linear(self.n_enc_channels, self.n_enc_channels),
+                nn.ReLU(),
+                nn.Linear(self.n_enc_channels, self.n_species),
+                nn.Sigmoid())
+        else:
+            raise ValueError(f'Number of layers {self.n_layers_mlp_pred} not implemented.')
 
     def forward(self, x):
         if x.ndim == 3:
@@ -455,7 +495,8 @@ class ImageEncoder(pl.LightningModule):
 
         encoding = self.resnet(x)
         if self.normalise_embedding == None:
-            pass
+            # pass
+            assert False, 'Expecting normalisation of embedding.'
         elif self.normalise_embedding == 'l2':
             ## dim=0; normalise each feature element across batch. dim=1; normalise each batch element across features.
             encoding = F.normalize(encoding, p=2, dim=1)
@@ -509,7 +550,7 @@ class ImageEncoder(pl.LightningModule):
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels)
 
-            inds_one = torch.where(dist_array_pres)
+            inds_one = torch.where(dist_array_pres > 0)
             dist_array_ims = dist_array_ims[inds_one]
             dist_array_pres = dist_array_pres[inds_one]
 
@@ -549,6 +590,8 @@ class ImageEncoder(pl.LightningModule):
             loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
         elif self.pred_train_loss == 'bce':
             loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
+        elif self.pred_train_loss == 'weighted-ce' and self.class_weights is not None:
+            loss = nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean')(pres_pred, pres_vec)
         elif self.pred_train_loss == 'weighted-bce' and self.class_weights is not None:
             loss = self.weighted_bce_loss(pres_pred, pres_vec)
         else:
@@ -557,33 +600,35 @@ class ImageEncoder(pl.LightningModule):
                 
     def training_step(self, batch, batch_idx):
         loss, _ = self.forward_pass(batch)
-        self.log(f'train_{self.name_train_loss}_loss', loss)
+        self.log(f'train_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
             loss, im_enc = self.forward_pass(batch)
-            self.log(f'val_{self.name_train_loss}_loss', loss)  # saving name loss function used so it can be recovered later
-            self.log('val_loss', loss)  # also save as val_loss for tensorboard (and lr_scheduler etc)
+            self.log(f'val_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)  # saving name loss function used so it can be recovered later
+            self.log('val_loss', loss, on_epoch=True, on_step=False)  # also save as val_loss for tensorboard (and lr_scheduler etc)
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
             pres_vec = batch[1]
             assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
             distance_pred_label_means = torch.mean(torch.abs(pres_vec.mean(0) - pres_pred.mean(0)))
-            self.log(f'val_distance_pred_label_means', distance_pred_label_means)
-            for k in [5, 10, 20]:
+            self.log(f'val_distance_pred_label_means', distance_pred_label_means, on_epoch=True, on_step=False)
+            for k in [1, 5, 10, 20]:
                 top_k_acc = self.top_k_accuracy(preds=pres_pred, target=pres_vec, k=k)
-                self.log(f'val_top_{k}_acc', top_k_acc)
+                self.log(f'val_top_{k}_acc', top_k_acc, on_epoch=True, on_step=False)
             mse_loss = F.mse_loss(pres_pred, pres_vec)
-            self.log(f'val_mse_loss', mse_loss)
+            self.log(f'val_mse_loss', mse_loss, on_epoch=True, on_step=False)
             mae_loss = nn.L1Loss()(pres_pred, pres_vec)
-            self.log(f'val_mae_loss', mae_loss)
+            self.log(f'val_mae_loss', mae_loss, on_epoch=True, on_step=False)
             ce_loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
-            self.log(f'val_ce_loss', ce_loss)
+            self.log(f'val_ce_loss', ce_loss, on_epoch=True, on_step=False)
             bce_loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
-            self.log(f'val_bce_loss', bce_loss)
+            self.log(f'val_bce_loss', bce_loss, on_epoch=True, on_step=False)
             if self.class_weights is not None:
                 bce_weighted_loss = self.weighted_bce_loss(pres_pred, pres_vec)
-                self.log(f'val_weighted-bce_loss', bce_weighted_loss)
+                self.log(f'val_weighted-bce_loss', bce_weighted_loss, on_epoch=True, on_step=False)
+                ce_weighted_loss = nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean')(pres_pred, pres_vec)
+                self.log(f'val_weighted-ce_loss', ce_weighted_loss, on_epoch=True, on_step=False)
             return loss
     
     def test_step(self, batch, batch_idx):
@@ -751,7 +796,8 @@ def calculate_similarity_batch(samples, distance_metric='cosine'):
                 assert False, f'Distance metric {distance_metric} not implemented.'
     return similarity_array_samples
 
-def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2, 
+def train_pecl(model=None, n_enc_channels=32, 
+               n_layers_mlp_resnet=1, n_layers_mlp_pred=1,
                pretrained_resnet='imagenet', freeze_resnet=True,
                resnet_version=18, pecl_distance_metric='cosine',
                pred_train_loss='mse', use_class_weights=False,
@@ -803,7 +849,8 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
 
     if model is None:
         model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, 
-                             n_layers_mlp=n_layers_mlp, pred_train_loss=pred_train_loss, 
+                             n_layers_mlp_resnet=n_layers_mlp_resnet, n_layers_mlp_pred=n_layers_mlp_pred,
+                             pred_train_loss=pred_train_loss, 
                             pretrained_resnet=pretrained_resnet, freeze_resnet=freeze_resnet,
                             optimizer_name='Adam', resnet_version=resnet_version,
                             class_weights=ds.weights_values if use_class_weights else None,
@@ -825,7 +872,7 @@ def train_pecl(model=None, n_enc_channels=32, n_layers_mlp=2,
                  cb_metrics]
 
     trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use,
-                         log_every_n_steps=10,  # train loss logging steps (each step = 1 batch)
+                         log_every_n_steps=5,  # train loss logging steps (each step = 1 batch)
                          reload_dataloaders_every_n_epochs=1, # reload such that train_dl re-shuffles.  https://github.com/Lightning-AI/pytorch-lightning/discussions/7332
                          callbacks=callbacks, logger=tb_logger)
 
