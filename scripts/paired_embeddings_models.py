@@ -270,7 +270,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         pres_vec = torch.tensor(pres_vec.values.astype(np.float32))
         return im, pres_vec
     
-    def plot_image(self, index=None, loc_name=None, ax=None):
+    def plot_image(self, index=None, loc_name=None, ax=None, plot_species_bar=False):
         if loc_name is not None and index is None:
             if loc_name in self.df_presence['name_loc'].values:
                 index = self.df_presence[self.df_presence['name_loc'] == loc_name].index[0]
