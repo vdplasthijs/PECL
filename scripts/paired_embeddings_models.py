@@ -13,6 +13,7 @@ import rioxarray as rxr
 import xarray as xr
 import shapely.geometry
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 from sklearn.decomposition import PCA 
 
 import torch
@@ -270,7 +271,8 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         pres_vec = torch.tensor(pres_vec.values.astype(np.float32))
         return im, pres_vec
     
-    def plot_image(self, index=None, loc_name=None, ax=None, plot_species_bar=False):
+    def plot_image(self, index=None, loc_name=None, ax=None, 
+                   plot_species_bar=True):
         if loc_name is not None and index is None:
             if loc_name in self.df_presence['name_loc'].values:
                 index = self.df_presence[self.df_presence['name_loc'] == loc_name].index[0]
@@ -311,6 +313,19 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             ax.spines[sp].set_visible(False)
         ax.set_aspect('equal')
         ax.set_title(f'{loc_name}, id {index}')
+
+        if plot_species_bar:
+            species_vector = self.df_presence[self.df_presence.name_loc == loc_name][self.species_list]
+            species_vector = species_vector.values[0]
+            assert len(species_vector) == len(self.species_list), f'Length of species vector {len(species_vector)} does not match number of species {len(self.species_list)}.'
+
+            divider = make_axes_locatable(ax)
+            targ_ax = divider.append_axes('right', size='5%', pad=0.01)
+            targ_ax.imshow(species_vector[:, None], cmap='Greys', aspect='auto', 
+                           interpolation='nearest', vmin=0, vmax=1)
+            targ_ax.set_xticks([])
+            targ_ax.set_yticks([])
+ 
         return ax
 
     def determine_mean_std_entire_ds(self, max_iter=100):
@@ -355,8 +370,8 @@ class ImageEncoder(pl.LightningModule):
                  lr=1e-3, pecl_knn=5, pecl_knn_hard_labels=False,
                  training_method='pecl',
                  normalise_embedding='l2', use_mps=True,
-                 use_lr_scheduler=False,
-                 verbose=1):
+                 use_lr_scheduler=False, seed_used=None,
+                 verbose=1, time_created=None):
         super(ImageEncoder, self).__init__()
         self.save_hyperparameters()
         self.n_species = n_species
@@ -364,6 +379,7 @@ class ImageEncoder(pl.LightningModule):
         self.n_bands = n_bands
         assert self.n_bands in [3, 4], f'Number of bands {self.n_bands} not implemented.'
         self.verbose = verbose
+        self.seed_used = seed_used  # Save seed used in training function
         self.pretrained_resnet = pretrained_resnet
         self.freeze_resnet = freeze_resnet
         self.lr = lr
@@ -381,6 +397,10 @@ class ImageEncoder(pl.LightningModule):
         self.pecl_knn = pecl_knn
         self.pecl_knn_hard_labels = pecl_knn_hard_labels
         self.use_lr_scheduler = use_lr_scheduler
+        self.model_name = None
+        self.v_num = None
+        self.log_dir = None
+        self.time_created = time_created
         if class_weights is not None:
             assert class_weights.ndim == 1, f'Class weights shape {class_weights.shape} not 1D.'
             assert class_weights.shape[0] == n_species, f'Class weights shape {class_weights.shape} does not match number of species {n_species}.'
@@ -549,7 +569,7 @@ class ImageEncoder(pl.LightningModule):
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels)
-
+            # if flatten_dist:
             inds_one = torch.where(dist_array_pres > 0)
             dist_array_ims = dist_array_ims[inds_one]
             dist_array_pres = dist_array_pres[inds_one]
@@ -560,7 +580,9 @@ class ImageEncoder(pl.LightningModule):
             assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
             assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
-            loss = -torch.mean(dist_array_pres * torch.log(dist_array_ims + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
+            # loss = -torch.mean(dist_array_pres * torch.log(dist_array_ims + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
+            
+            loss =nn.BCELoss(reduction='mean')(dist_array_ims, dist_array_pres)
             assert loss >= 0, loss
         else:
             dist_array_ims = calculate_similarity_batch(im_enc, distance_metric=self.pecl_distance_metric)
@@ -702,7 +724,36 @@ class ImageEncoder(pl.LightningModule):
         self.df_metrics = pd.DataFrame(self.metric_arrays)
         return 
 
-    def save_model(self, folder='/Users/t.vanderplas/models/PECL/', 
+    def save_stats(self, folder='/Users/t.vanderplas/models/PECL/stats/',
+                   verbose=1):
+        '''Save logger stats & model params only. '''
+        assert self.df_metrics is not None, 'Metrics not stored yet.'
+        assert os.path.exists(folder), f'Folder {folder} does not exist.'
+        ## Save v_num that is used for tensorboard
+        self.v_num = self.logger.version
+        ## Save logging directory that is used for tensorboard
+        self.log_dir = self.logger.log_dir
+
+        if self.model_name is None:
+            timestamp = cdu.create_timestamp()
+            self.model_name = f'PECL-ImEn_{timestamp}_vnum-{self.v_num}'
+
+        self.dict_save = {
+            'hparams': {**self.hparams, **{'name_train_loss': self.name_train_loss},
+                        'n_epochs_converged': self.n_epochs_converged},
+            'v_num': self.v_num,
+            'log_dir': self.log_dir,
+            'logger': self.logger.__dict__,
+            'df_metrics': self.df_metrics
+        }
+        self.filename = f'{self.model_name}_stats.pkl'
+        self.filepath = os.path.join(folder, self.filename)
+        with open(self.filepath, 'wb') as f:
+            pickle.dump(self.dict_save, f)
+        if verbose > 0:
+            print(f'Stats saved as {self.filename} at {self.filepath}')
+
+    def save_model(self, folder='/Users/t.vanderplas/models/PECL/full_models/', 
                    verbose=1):
         '''Save model'''
         assert self.df_metrics is not None, 'Metrics not stored yet.' 
@@ -711,9 +762,10 @@ class ImageEncoder(pl.LightningModule):
         ## Save logging directory that is used for tensorboard
         self.log_dir = self.logger.log_dir
         
-        timestamp = cdu.create_timestamp()
-        self.filename = f'PECL-ImEn_{timestamp}.data'
-        self.model_name = f'PECL-ImEn_{timestamp}'
+        if self.model_name is None:
+            timestamp = cdu.create_timestamp()
+            self.model_name = f'PECL-ImEn_{timestamp}_vnum-{self.v_num}'
+        self.filename = f'{self.model_name}.data'
         self.filepath = os.path.join(folder, self.filename)
 
         file_handle = open(self.filepath, 'wb')
@@ -723,9 +775,11 @@ class ImageEncoder(pl.LightningModule):
             print(f'PECL-ImEn model saved as {self.filename} at {self.filepath}')
         return self.filepath
 
-def load_model(folder='/Users/t.vanderplas/models/PECL/', 
+def load_model(folder='/Users/t.vanderplas/models/PECL/full_models/', 
                filename='', verbose=1):
     '''Load previously saved (pickled) model'''
+    assert filename != '', 'Filename not provided.'
+    assert filename.endswith('.data'), f'Filename {filename} should end with .data'
     with open(os.path.join(folder, filename), 'rb') as f:
         model = pickle.load(f)
 
@@ -735,6 +789,36 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/',
             print(model.description)
 
     return model 
+
+def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vanderplas/models/PECL/lightning_logs/'):
+    '''Load model from checkpoint file.'''
+    assert filepath is not None or v_num is not None, 'Version number and filepath not provided.'
+    if filepath is None:
+        assert v_num is not None, 'Version number and filepath not provided.'
+        assert type(v_num) == int, f'Expected int for version number, but got {type(v_num)}'
+        folder_v_num = os.path.join(base_folder, f'version_{v_num}')
+        assert os.path.exists(folder_v_num), f'Folder {folder_v_num} does not exist.'
+        folder_ckpt = os.path.join(folder_v_num, 'checkpoints')
+        contents_folder_ckpt = os.listdir(folder_ckpt)
+        assert len(contents_folder_ckpt) == 1, f'Expected 1 file in folder {folder_ckpt}, but got {len(contents_folder_ckpt)}'
+        filepath = os.path.join(folder_ckpt, contents_folder_ckpt[0])
+    elif v_num is None:
+        assert filepath is not None, 'Version number and filepath not provided.'
+        assert filepath.endswith('.ckpt'), f'Filepath {filepath} should end with .ckpt'
+        assert os.path.exists(filepath), f'File {filepath} does not exist.'
+    # model = ImageEncoder.load_from_checkpoint(filepath)
+    # return model
+    assert False, 'Not implemented yet.'
+
+def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename='', verbose=1):
+    '''Load previously saved (pickled) stats'''
+    assert filename != '', 'Filename not provided.'
+    assert filename.endswith('.pkl'), f'Filename {filename} should end with .pkl'
+    with open(os.path.join(folder, filename), 'rb') as f:
+        dict_load = pickle.load(f)
+    if verbose > 0:
+        print(f'Loaded stats from {filename} at {folder}')
+    return dict_load
 
 def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_denominator=True,
                                       flatten=True, knn=None, knn_hard_labels=False,
@@ -807,7 +891,7 @@ def train_pecl(model=None, n_enc_channels=32,
                pecl_knn=5, pecl_knn_hard_labels=False,
                use_lr_scheduler=False,
                verbose=1, fix_seed=42, use_mps=True,
-               save_model=False):
+               save_model=False, save_stats=True):
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
 
@@ -836,9 +920,10 @@ def train_pecl(model=None, n_enc_channels=32,
     if verbose > 0:  # possibly also insert assert versions
         print(f'Pytorch version is {torch.__version__}') 
 
+    time_created = cdu.create_timestamp(include_seconds=True)
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              augment_image=True,
+                              augment_image=True, time_created=time_created,
                               n_bands=n_bands, zscore_im=True, mode='train')
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
     val_ds.dataset.mode = 'val'
@@ -860,14 +945,14 @@ def train_pecl(model=None, n_enc_channels=32,
                             lr=lr, n_bands=n_bands, use_mps=use_mps,
                             use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
-                            verbose=verbose)
+                            verbose=verbose, seed_used=fix_seed)
     else:
         assert type(model) == ImageEncoder, f'Expected model to be ImageEncoder, but got {type(model)}'
         assert model.n_species == ds.n_species, f'Number of species in model {model.n_species} does not match number of species in dataset {ds.n_species}.'
         assert model.n_enc_channels == n_enc_channels, f'Number of encoding channels in model {model.n_enc_channels} does not match number of encoding channels in dataset {n_enc_channels}.'
     
     cb_metrics = MetricsCallback()
-    callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_mse_loss', save_top_k=1, mode='min',
+    callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
                                             filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}"),
                  cb_metrics]
 
@@ -884,6 +969,8 @@ def train_pecl(model=None, n_enc_channels=32,
     print(f'-- Finished training at {timestamp_end}.')
 
     model.store_metrics(metrics=cb_metrics.metrics)
+    if save_stats:
+        model.save_stats(verbose=1)
     if save_model:
         model.save_model(verbose=1)
     return model, (train_dl, val_dl)

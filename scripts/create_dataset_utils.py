@@ -478,7 +478,10 @@ def download_gee_image(df_mapping_locs_row, use_point=False,
 
     return im_crop, filepath
 
-def create_timestamp():
+def create_timestamp(include_seconds=False):
     dt = datetime.datetime.now()
     timestamp = str(dt.date()) + '-' + str(dt.hour).zfill(2) + str(dt.minute).zfill(2)
+    if include_seconds:
+        timestamp += ':' + str(dt.second).zfill(2)
     return timestamp
+
