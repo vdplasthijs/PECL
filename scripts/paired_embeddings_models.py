@@ -368,7 +368,7 @@ class ImageEncoder(pl.LightningModule):
                  pecl_distance_metric='cosine',
                  pred_train_loss='mse', class_weights=None,
                  lr=1e-3, pecl_knn=5, pecl_knn_hard_labels=False,
-                 training_method='pecl',
+                 training_method='pecl', alpha_ratio_loss=None,
                  normalise_embedding='l2', use_mps=True,
                  use_lr_scheduler=False, seed_used=None,
                  verbose=1, time_created=None):
@@ -383,6 +383,7 @@ class ImageEncoder(pl.LightningModule):
         self.pretrained_resnet = pretrained_resnet
         self.freeze_resnet = freeze_resnet
         self.lr = lr
+        self.alpha_ratio_loss = alpha_ratio_loss
         self.resnet_version = resnet_version
         self.n_layers_mlp_resnet = n_layers_mlp_resnet
         assert self.n_layers_mlp_resnet == 1, 'Expecting 1 layer MLP for projection head for now.'
@@ -430,6 +431,13 @@ class ImageEncoder(pl.LightningModule):
             self.pred_train_loss = pred_train_loss
             self.name_train_loss = f'pred-{pred_train_loss}'
             self.train_im_enc_during_pred = True
+        elif training_method == 'pred_and_pecl':
+            self.forward_pass = self.pred_and_pecl_pass
+            self.pred_train_loss = pred_train_loss
+            self.name_train_loss = f'pred-{pred_train_loss}_pecl-{pecl_distance_metric}'
+            assert self.alpha_ratio_loss is not None, 'Expecting alpha_ratio_loss to be set.'
+            assert self.alpha_ratio_loss > 0, 'Expecting alpha_ratio_loss to be > 0.'
+            
         else:
             assert False, f'Training method {training_method} not implemented.'
        
@@ -453,7 +461,7 @@ class ImageEncoder(pl.LightningModule):
         ## Load Resnet, if needed modify first layer to accept 4 bands
         if self.pretrained_resnet == 'seco':
             self.resnet = map_seco_to_torchvision_weights(model=None, device_use='mps' if self.use_mps else 'cpu',
-                                                          resnet_name=f'resnet{self.resnet_version}', verbose=1)
+                                                          resnet_name=f'resnet{self.resnet_version}', verbose=0)
             self.pretrained_weights_name = f'seco_resnet{self.resnet_version}_1m'
             print('Loaded Resnet with SeCo weights.')
         elif self.pretrained_resnet is None or self.pretrained_resnet == False:
@@ -514,8 +522,7 @@ class ImageEncoder(pl.LightningModule):
             x = x.unsqueeze(0)
 
         encoding = self.resnet(x)
-        if self.normalise_embedding == None:
-            # pass
+        if self.normalise_embedding is None:
             assert False, 'Expecting normalisation of embedding.'
         elif self.normalise_embedding == 'l2':
             ## dim=0; normalise each feature element across batch. dim=1; normalise each batch element across features.
@@ -561,6 +568,10 @@ class ImageEncoder(pl.LightningModule):
         Then train/val/test step just calls forward() and the loss function.
         
         '''
+        loss, im_enc = self.pecl_loss(im_enc, pres_vec)
+        return loss, im_enc
+
+    def pecl_loss(self, im_enc, pres_vec):
         if self.pecl_distance_metric == 'softmax':
             if self.pecl_knn is not None:
                 flatten_dist = False
@@ -575,16 +586,17 @@ class ImageEncoder(pl.LightningModule):
             dist_array_pres = dist_array_pres[inds_one]
 
             ## cross entropy loss
-            # loss = F.cross_entropy(dist_array_ims, dist_array_pres)
             assert (dist_array_ims >= 0).all(), (dist_array_ims, im_enc)
             assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
             assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
             # loss = -torch.mean(dist_array_pres * torch.log(dist_array_ims + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
-            
-            loss =nn.BCELoss(reduction='mean')(dist_array_ims, dist_array_pres)
+            loss = nn.CrossEntropyLoss(reduction='mean')(dist_array_ims, dist_array_pres)
+
+            # loss =nn.BCELoss(reduction='mean')(dist_array_ims, dist_array_pres)
             assert loss >= 0, loss
         else:
+            assert False, f'Distance metric {self.pecl_distance_metric} deprecated.'
             dist_array_ims = calculate_similarity_batch(im_enc, distance_metric=self.pecl_distance_metric)
             dist_array_pres = calculate_similarity_batch(pres_vec, distance_metric=self.pecl_distance_metric)
             
@@ -604,6 +616,28 @@ class ImageEncoder(pl.LightningModule):
             with torch.no_grad():  # Don't train encoding model here. 
                 im_enc = self.forward(im)
         pres_pred = self.prediction_model(im_enc)
+        loss = self.pred_loss(pres_pred, pres_vec)
+        return loss, im_enc
+    
+    def pred_and_pecl_pass(self, batch):
+        '''Train the encoding model using the PECL method, and the prediction model.'''
+        im, pres_vec = batch
+        
+        # Forward pass
+        im_enc = self.forward(im)
+        if self.normalise_embedding == 'l2':
+            pres_vec_pecl = F.normalize(pres_vec, p=2, dim=1)
+        else:
+            assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
+
+        loss_pecl, im_enc = self.pecl_loss(im_enc, pres_vec_pecl)
+        pres_pred = self.prediction_model(im_enc)
+        loss_pred = self.pred_loss(pres_pred, pres_vec)
+
+        loss = loss_pred + self.alpha_ratio_loss * loss_pecl
+        return loss, im_enc
+
+    def pred_loss(self, pres_pred, pres_vec):
         if self.pred_train_loss == 'mse':
             loss = F.mse_loss(pres_pred, pres_vec)
         elif self.pred_train_loss == 'mae':
@@ -618,7 +652,7 @@ class ImageEncoder(pl.LightningModule):
             loss = self.weighted_bce_loss(pres_pred, pres_vec)
         else:
             assert False, f'Prediction training loss {self.pred_train_loss} not implemented.'
-        return loss, im_enc
+        return loss
                 
     def training_step(self, batch, batch_idx):
         loss, _ = self.forward_pass(batch)
@@ -664,7 +698,13 @@ class ImageEncoder(pl.LightningModule):
         '''Weighted binary cross entropy loss.'''
         assert preds.shape == target.shape
         assert self.class_weights is not None, 'Class weights not set.'
+        assert self.class_weights.ndim == 1, f'Class weights shape {self.class_weights.shape} not 1D.'
+        assert self.class_weights.shape[0] == self.n_species, f'Class weights shape {self.class_weights.shape} does not match number of species {self.n_species}.'
         intermediate_loss = nn.BCELoss(reduction='none')(preds, target)  #TODO: add mean over just batch dimension here?
+        assert intermediate_loss.shape == target.shape, (intermediate_loss.shape, target.shape)
+        assert intermediate_loss.shape[1] == self.n_species, (intermediate_loss.shape, self.n_species)
+        intermediate_loss = torch.mean(intermediate_loss, dim=0)  
+        assert intermediate_loss.shape == self.class_weights.shape, (intermediate_loss.shape, self.class_weights.shape)
         loss = torch.mean(intermediate_loss * self.class_weights)
         return loss
 
@@ -740,6 +780,7 @@ class ImageEncoder(pl.LightningModule):
 
         self.dict_save = {
             'hparams': {**self.hparams, **{'name_train_loss': self.name_train_loss},
+                        'pred_train_loss': self.pred_train_loss,
                         'n_epochs_converged': self.n_epochs_converged},
             'v_num': self.v_num,
             'log_dir': self.log_dir,
@@ -831,7 +872,7 @@ def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_
         pass
     elif similarity_function == 'cosine':
         samples = F.normalize(samples, p=2, dim=1)
-        assert False, 'Cosine similarity not implemented yet.'
+        assert False, 'Expected samples to be already normalised..'
     else:
         assert False, f'Similarity function {similarity_function} not implemented.'
 
@@ -844,6 +885,7 @@ def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_
         sum_inner_prod_mat = sum_inner_prod_mat - diag
     sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
     inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
+
     if knn is not None:
         assert flatten is False, 'Flatten should be False if KNN is used.'
         assert type(knn) == int, f'Expected int for knn, but got {type(knn)}'
@@ -920,10 +962,9 @@ def train_pecl(model=None, n_enc_channels=32,
     if verbose > 0:  # possibly also insert assert versions
         print(f'Pytorch version is {torch.__version__}') 
 
-    time_created = cdu.create_timestamp(include_seconds=True)
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              augment_image=True, time_created=time_created,
+                              augment_image=True, 
                               n_bands=n_bands, zscore_im=True, mode='train')
     train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
     val_ds.dataset.mode = 'val'
@@ -933,6 +974,7 @@ def train_pecl(model=None, n_enc_channels=32,
                         shuffle=False,  persistent_workers=True) 
 
     if model is None:
+        time_created = cdu.create_timestamp(include_seconds=True)
         model = ImageEncoder(n_species=ds.n_species, n_enc_channels=n_enc_channels, 
                              n_layers_mlp_resnet=n_layers_mlp_resnet, n_layers_mlp_pred=n_layers_mlp_pred,
                              pred_train_loss=pred_train_loss, 
@@ -945,6 +987,7 @@ def train_pecl(model=None, n_enc_channels=32,
                             lr=lr, n_bands=n_bands, use_mps=use_mps,
                             use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
+                            time_created=time_created,
                             verbose=verbose, seed_used=fix_seed)
     else:
         assert type(model) == ImageEncoder, f'Expected model to be ImageEncoder, but got {type(model)}'
