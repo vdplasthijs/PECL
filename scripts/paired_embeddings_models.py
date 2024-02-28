@@ -447,28 +447,40 @@ class ImageEncoder(pl.LightningModule):
             assert self.class_weights.ndim == 1, f'Class weights shape {self.class_weights.shape} not 1D.'
             assert self.class_weights.shape[0] == self.n_species, f'Class weights shape {self.class_weights.shape} does not match number of species {self.n_species}.'
         
-
     def build_training_method(self, training_method, pred_train_loss):
         self.train_im_enc_during_pred = False
         if training_method == 'pecl':
             self.forward_pass = self.pecl_pass
             self.pred_train_loss = None
             self.name_train_loss = f'pecl-{self.pecl_distance_metric}'
+            self.freeze_resnet_layers(freeze_all_but_last=self.freeze_resnet,
+                                      freeze_last=False)
+            self.freeze_prediction_model(freeze=True)
         elif training_method == 'pred':
             self.forward_pass = self.pred_pass
             self.pred_train_loss = pred_train_loss
             self.name_train_loss = f'pred-{pred_train_loss}'
+            self.freeze_resnet_layers(freeze_all_but_last=True,
+                                      freeze_last=True)
+            self.freeze_prediction_model(freeze=False)
         elif training_method == 'pred_incl_enc':
             self.forward_pass = self.pred_pass
             self.pred_train_loss = pred_train_loss
             self.name_train_loss = f'pred-{pred_train_loss}'
             self.train_im_enc_during_pred = True
+            self.freeze_resnet_layers(freeze_all_but_last=self.freeze_resnet,
+                                      freeze_last=False)
+            self.freeze_prediction_model(freeze=False)
         elif training_method == 'pred_and_pecl':
             self.forward_pass = self.pred_and_pecl_pass
             self.pred_train_loss = pred_train_loss
             self.name_train_loss = f'pred-{pred_train_loss}_pecl-{self.pecl_distance_metric}'
             assert self.alpha_ratio_loss is not None, 'Expecting alpha_ratio_loss to be set.'
-            assert self.alpha_ratio_loss > 0, 'Expecting alpha_ratio_loss to be > 0.'        
+            assert self.alpha_ratio_loss > 0, 'Expecting alpha_ratio_loss to be > 0.'    
+            
+            self.freeze_resnet_layers(freeze_all_but_last=self.freeze_resnet,
+                                      freeze_last=False)
+            self.freeze_prediction_model(freeze=False)    
         else:
             assert False, f'Training method {training_method} not implemented.'
 
@@ -512,12 +524,6 @@ class ImageEncoder(pl.LightningModule):
         else:
             assert False, f'Number of layers {self.n_layers_mlp_resnet} not implemented.'    
 
-        ## Freeze Resnet, except for self.resnet.fc, if requested:
-        if self.freeze_resnet:
-            for child in list(self.resnet.children())[:-1]:  # Freeze all layers except the last one
-                for param in child.parameters():  # set all parameters to not require gradients
-                    param.requires_grad = False
-
         ## Prediction model to predict presence/absence from encoded image
         if self.n_layers_mlp_pred == 1:
             self.prediction_model = nn.Sequential(
@@ -532,6 +538,30 @@ class ImageEncoder(pl.LightningModule):
         else:
             raise ValueError(f'Number of layers {self.n_layers_mlp_pred} not implemented.')
 
+    def freeze_resnet_layers(self, freeze_all_but_last=True, freeze_last=False):
+        layers_resnet = list(self.resnet.children())
+        n_layers = len(layers_resnet)
+        for i_c, child in enumerate(layers_resnet):
+            if i_c < n_layers - 1:  # everything except last layer , which is the FC layer
+                for param in child.parameters():
+                    if freeze_all_but_last:
+                        param.requires_grad = False
+                    else:
+                        param.requires_grad = True
+            else:
+                for param in child.parameters():
+                    if freeze_last:
+                        param.requires_grad = False
+                    else:
+                        param.requires_grad = True
+
+        print(f'Freezing all but last layer: {freeze_all_but_last}, last layer: {freeze_last}.')
+
+    def freeze_prediction_model(self, freeze=True):
+        for param in self.prediction_model.parameters():
+            param.requires_grad = not freeze
+        print(f'Freezing prediction model: {freeze}.')
+
     def forward(self, x):
         if x.ndim == 3:
             x = x.unsqueeze(0)
@@ -540,8 +570,7 @@ class ImageEncoder(pl.LightningModule):
         if self.normalise_embedding is None:
             assert False, 'Expecting normalisation of embedding.'
         elif self.normalise_embedding == 'l2':
-            ## dim=0; normalise each feature element across batch. dim=1; normalise each batch element across features.
-            encoding = F.normalize(encoding, p=2, dim=1)
+            encoding = F.normalize(encoding, p=2, dim=1)  ## dim=0; normalise each feature element across batch. dim=1; normalise each batch element across features.
         else:
             assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
         
@@ -606,10 +635,7 @@ class ImageEncoder(pl.LightningModule):
             assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
             assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
-            # loss = -torch.mean(dist_array_pres * torch.log(dist_array_ims + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
             loss = (-1 * torch.log(dist_array_ims + 1e-8) * dist_array_pres).mean()
-            # loss = nn.CrossEntropyLoss(reduction='mean')(dist_array_ims, dist_array_pres)
-            # loss =nn.BCELoss(reduction='mean')(dist_array_ims, dist_array_pres)
             assert loss >= 0, loss
         else:
             assert False, f'Distance metric {self.pecl_distance_metric} deprecated.'
