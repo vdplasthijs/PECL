@@ -15,12 +15,13 @@ if __name__ == '__main__':
     pred_train_loss = ['weighted-bce', 'bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
+    fix_seed = [42]
     
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
                                   n_enc_channels, lr, batch_size, pecl_knn, 
                                   pecl_knn_hard_labels, pred_train_loss, 
-                                  pretrained_resnet))
+                                  pretrained_resnet, fix_seed))
     n_combinations = len(iterator)
     i_it = 0
     print(f'Number of combinations: {n_combinations}')
@@ -36,6 +37,7 @@ if __name__ == '__main__':
             'pecl_knn_hard_labels': args[6],
             'pred_train_loss': args[7],
             'pretrained_resnet': args[8],
+            'fix_seed': args[9]
         }
 
         print(f'---- {i_it}/{n_combinations} ----')

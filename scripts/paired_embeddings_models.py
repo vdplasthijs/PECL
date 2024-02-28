@@ -370,7 +370,8 @@ class ImageEncoder(pl.LightningModule):
                  lr=1e-3, pecl_knn=5, pecl_knn_hard_labels=False,
                  training_method='pecl', alpha_ratio_loss=None,
                  normalise_embedding='l2', use_mps=True,
-                 use_lr_scheduler=False, seed_used=None,
+                 use_lr_scheduler=False, seed_used=None, 
+                 batch_size_used=None,
                  verbose=1, time_created=None):
         super(ImageEncoder, self).__init__()
         self.save_hyperparameters()
@@ -380,6 +381,7 @@ class ImageEncoder(pl.LightningModule):
         assert self.n_bands in [3, 4], f'Number of bands {self.n_bands} not implemented.'
         self.verbose = verbose
         self.seed_used = seed_used  # Save seed used in training function
+        self.batch_size_used = batch_size_used  ## only saved for reference, not required
         self.pretrained_resnet = pretrained_resnet
         self.freeze_resnet = freeze_resnet
         self.lr = lr
@@ -402,44 +404,11 @@ class ImageEncoder(pl.LightningModule):
         self.v_num = None
         self.log_dir = None
         self.time_created = time_created
-        if class_weights is not None:
-            assert class_weights.ndim == 1, f'Class weights shape {class_weights.shape} not 1D.'
-            assert class_weights.shape[0] == n_species, f'Class weights shape {class_weights.shape} does not match number of species {n_species}.'
-            self.class_weights = torch.tensor(class_weights).float() 
-            print(f'Loaded {self.class_weights.shape[0]} class weights on {self.class_weights.device}.')
-            if self.use_mps:
-                self.class_weights = self.class_weights.to('mps')
-                print(f'Class weights now on {self.class_weights.device}.')
-        else:
-            print('No class weights.')
-            self.class_weights = None
         self.description = f'ImageEncoder with {n_enc_channels} encoding channels, {n_bands} bands, {n_species} species, {n_layers_mlp_resnet} MLP layers, {resnet_version} Resnet, {pecl_distance_metric} distance metric, {training_method} training method.'
         self.df_metrics = None 
+        self.build_class_weights(class_weights=class_weights)
         self.build_model()
-
-        self.train_im_enc_during_pred = False
-        if training_method == 'pecl':
-            self.forward_pass = self.pecl_pass
-            self.pred_train_loss = None
-            self.name_train_loss = f'pecl-{pecl_distance_metric}'
-        elif training_method == 'pred':
-            self.forward_pass = self.pred_pass
-            self.pred_train_loss = pred_train_loss
-            self.name_train_loss = f'pred-{pred_train_loss}'
-        elif training_method == 'pred_incl_enc':
-            self.forward_pass = self.pred_pass
-            self.pred_train_loss = pred_train_loss
-            self.name_train_loss = f'pred-{pred_train_loss}'
-            self.train_im_enc_during_pred = True
-        elif training_method == 'pred_and_pecl':
-            self.forward_pass = self.pred_and_pecl_pass
-            self.pred_train_loss = pred_train_loss
-            self.name_train_loss = f'pred-{pred_train_loss}_pecl-{pecl_distance_metric}'
-            assert self.alpha_ratio_loss is not None, 'Expecting alpha_ratio_loss to be set.'
-            assert self.alpha_ratio_loss > 0, 'Expecting alpha_ratio_loss to be > 0.'
-            
-        else:
-            assert False, f'Training method {training_method} not implemented.'
+        self.build_training_method(training_method=training_method, pred_train_loss=pred_train_loss)
        
         if self.pred_train_loss in ['weighted-bce', 'weighted-ce']:
             assert self.class_weights is not None, 'Class weights not set.'
@@ -456,6 +425,52 @@ class ImageEncoder(pl.LightningModule):
             self.description = self.description + '\n' + new_description
         else:
             self.description = new_description
+
+    def build_class_weights(self, class_weights):
+        ## Load class weights
+        if class_weights is not None:
+            assert class_weights.ndim == 1, f'Class weights shape {class_weights.shape} not 1D.'
+            assert class_weights.shape[0] == self.n_species, f'Class weights shape {class_weights.shape} does not match number of species {self.n_species}.'
+            self.class_weights = torch.tensor(class_weights).float() 
+            print(f'Loaded {self.class_weights.shape[0]} class weights on {self.class_weights.device}.')
+            if self.use_mps:
+                self.class_weights = self.class_weights.to('mps')
+                print(f'Class weights now on {self.class_weights.device}.')
+        else:
+            print('No class weights.')
+            self.class_weights = None
+
+        ## Some checks:
+        if self.class_weights is not None:
+            assert self.class_weights is not None, 'Class weights not set.'
+            assert type(self.class_weights) == torch.Tensor, f'Class weights type {type(self.class_weights)} not torch.Tensor.'
+            assert self.class_weights.ndim == 1, f'Class weights shape {self.class_weights.shape} not 1D.'
+            assert self.class_weights.shape[0] == self.n_species, f'Class weights shape {self.class_weights.shape} does not match number of species {self.n_species}.'
+        
+
+    def build_training_method(self, training_method, pred_train_loss):
+        self.train_im_enc_during_pred = False
+        if training_method == 'pecl':
+            self.forward_pass = self.pecl_pass
+            self.pred_train_loss = None
+            self.name_train_loss = f'pecl-{self.pecl_distance_metric}'
+        elif training_method == 'pred':
+            self.forward_pass = self.pred_pass
+            self.pred_train_loss = pred_train_loss
+            self.name_train_loss = f'pred-{pred_train_loss}'
+        elif training_method == 'pred_incl_enc':
+            self.forward_pass = self.pred_pass
+            self.pred_train_loss = pred_train_loss
+            self.name_train_loss = f'pred-{pred_train_loss}'
+            self.train_im_enc_during_pred = True
+        elif training_method == 'pred_and_pecl':
+            self.forward_pass = self.pred_and_pecl_pass
+            self.pred_train_loss = pred_train_loss
+            self.name_train_loss = f'pred-{pred_train_loss}_pecl-{self.pecl_distance_metric}'
+            assert self.alpha_ratio_loss is not None, 'Expecting alpha_ratio_loss to be set.'
+            assert self.alpha_ratio_loss > 0, 'Expecting alpha_ratio_loss to be > 0.'        
+        else:
+            assert False, f'Training method {training_method} not implemented.'
 
     def build_model(self):
         ## Load Resnet, if needed modify first layer to accept 4 bands
@@ -579,8 +594,9 @@ class ImageEncoder(pl.LightningModule):
                 flatten_dist = True
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
-                                                                knn_hard_labels=self.pecl_knn_hard_labels)
-            # if flatten_dist:
+                                                                knn_hard_labels=self.pecl_knn_hard_labels)\
+                                                                
+            # return dist_array_ims, dist_array_pres
             inds_one = torch.where(dist_array_pres > 0)
             dist_array_ims = dist_array_ims[inds_one]
             dist_array_pres = dist_array_pres[inds_one]
@@ -591,8 +607,8 @@ class ImageEncoder(pl.LightningModule):
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
             assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
             # loss = -torch.mean(dist_array_pres * torch.log(dist_array_ims + 1e-8))# + (1 - dist_array_ims) * torch.log(1 - dist_array_pres + 1e-8))
-            loss = nn.CrossEntropyLoss(reduction='mean')(dist_array_ims, dist_array_pres)
-
+            loss = (-1 * torch.log(dist_array_ims + 1e-8) * dist_array_pres).mean()
+            # loss = nn.CrossEntropyLoss(reduction='mean')(dist_array_ims, dist_array_pres)
             # loss =nn.BCELoss(reduction='mean')(dist_array_ims, dist_array_pres)
             assert loss >= 0, loss
         else:
@@ -697,11 +713,8 @@ class ImageEncoder(pl.LightningModule):
     def weighted_bce_loss(self, preds, target):
         '''Weighted binary cross entropy loss.'''
         assert preds.shape == target.shape
-        assert self.class_weights is not None, 'Class weights not set.'
-        assert self.class_weights.ndim == 1, f'Class weights shape {self.class_weights.shape} not 1D.'
-        assert self.class_weights.shape[0] == self.n_species, f'Class weights shape {self.class_weights.shape} does not match number of species {self.n_species}.'
         intermediate_loss = nn.BCELoss(reduction='none')(preds, target)  #TODO: add mean over just batch dimension here?
-        assert intermediate_loss.shape == target.shape, (intermediate_loss.shape, target.shape)
+        # assert intermediate_loss.shape == target.shape, (intermediate_loss.shape, target.shape)
         assert intermediate_loss.shape[1] == self.n_species, (intermediate_loss.shape, self.n_species)
         intermediate_loss = torch.mean(intermediate_loss, dim=0)  
         assert intermediate_loss.shape == self.class_weights.shape, (intermediate_loss.shape, self.class_weights.shape)
@@ -737,7 +750,15 @@ class ImageEncoder(pl.LightningModule):
         return top_k_acc
     
     def store_metrics(self, metrics):
-        assert self.df_metrics is None, 'Metrics already stored.'
+        if self.df_metrics is not None:
+            print('-- When saving metrics, df_metrics already exists. Appending to old_df_metrics.')
+            if hasattr(self, 'old_df_metrics'):
+                assert type(self.old_df_metrics) == list
+                self.old_df_metrics.append(copy.deepcopy(self.df_metrics))
+            else:
+                self.old_df_metrics = [copy.deepcopy(self.df_metrics)]
+            print(f'-- Old df_metrics stored in old_df_metrics list of length {len(self.old_df_metrics)}')
+
         self.n_epochs_converged = len(metrics) 
         metrics_float = []
         self.set_metric_names = set()
@@ -861,7 +882,7 @@ def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename='', ver
         print(f'Loaded stats from {filename} at {folder}')
     return dict_load
 
-def normalised_softmax_distance_batch(samples, temperature=0.1, exclude_diag_in_denominator=True,
+def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_denominator=True,
                                       flatten=True, knn=None, knn_hard_labels=False,
                                       similarity_function='inner'):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
@@ -987,13 +1008,33 @@ def train_pecl(model=None, n_enc_channels=32,
                             lr=lr, n_bands=n_bands, use_mps=use_mps,
                             use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
-                            time_created=time_created,
+                            time_created=time_created, batch_size_used=batch_size,
                             verbose=verbose, seed_used=fix_seed)
     else:
         assert type(model) == ImageEncoder, f'Expected model to be ImageEncoder, but got {type(model)}'
         assert model.n_species == ds.n_species, f'Number of species in model {model.n_species} does not match number of species in dataset {ds.n_species}.'
         assert model.n_enc_channels == n_enc_channels, f'Number of encoding channels in model {model.n_enc_channels} does not match number of encoding channels in dataset {n_enc_channels}.'
-    
+        assert model.n_layers_mlp_pred == n_layers_mlp_pred, f'Number of layers in prediction model {model.n_layers_mlp_pred} does not match number of layers in dataset {n_layers_mlp_pred}.'
+        assert model.n_layers_mlp_resnet == n_layers_mlp_resnet, f'Number of layers in resnet model {model.n_layers_mlp_resnet} does not match number of layers in dataset {n_layers_mlp_resnet}.'
+        assert model.resnet_version == resnet_version, f'Resnet version in model {model.resnet_version} does not match resnet version in dataset {resnet_version}.'
+        assert model.normalise_embedding == normalise_embedding, f'Normalisation method in model {model.normalise_embedding} does not match normalisation method in dataset {normalise_embedding}.'
+        assert model.n_bands == n_bands, f'Number of bands in model {model.n_bands} does not match number of bands in dataset {n_bands}.'
+
+        model.lr = lr
+        model.freeze_resnet = freeze_resnet
+        model.pecl_distance_metric = pecl_distance_metric
+        model.pecl_knn = pecl_knn
+        model.pecl_knn_hard_labels = pecl_knn_hard_labels
+        model.use_lr_scheduler = use_lr_scheduler
+        model.verbose = verbose
+        model.seed_used = fix_seed
+        model.model_name = None  # reset model name
+        model.batch_size_used = batch_size
+
+        model.build_class_weights(class_weights=ds.weights_values if use_class_weights else None)
+        model.build_training_method(training_method=training_method, pred_train_loss=pred_train_loss)
+       
+
     cb_metrics = MetricsCallback()
     callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
                                             filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}"),
