@@ -325,8 +325,10 @@ class DataSetImagePresence(torch.utils.data.Dataset):
                            interpolation='nearest', vmin=0, vmax=1)
             targ_ax.set_xticks([])
             targ_ax.set_yticks([])
- 
-        return ax
+        else:
+            targ_ax = None
+            
+        return ax, targ_ax
 
     def determine_mean_std_entire_ds(self, max_iter=100):
         for i_sample, sample in tqdm(enumerate(self)):
@@ -969,15 +971,17 @@ def calculate_similarity_batch(samples, distance_metric='cosine'):
                 assert False, f'Distance metric {distance_metric} not implemented.'
     return similarity_array_samples
 
-def train_pecl(model=None, n_enc_channels=32, 
-               n_layers_mlp_resnet=1, n_layers_mlp_pred=1,
-               pretrained_resnet='imagenet', freeze_resnet=True,
-               resnet_version=18, pecl_distance_metric='cosine',
-               pred_train_loss='mse', use_class_weights=False,
-               normalise_embedding=None, n_bands=4,
-               training_method='pecl', lr=1e-3, batch_size=8, n_epochs_max=10, 
-               image_folder=None, presence_csv=None, species_process='all',
-               pecl_knn=5, pecl_knn_hard_labels=False,
+def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
+               n_enc_channels=256, 
+               n_layers_mlp_resnet=1, n_layers_mlp_pred=2,
+               pretrained_resnet='seco', freeze_resnet=True,
+               resnet_version=18, pecl_distance_metric='softmax',
+               pred_train_loss='bce', use_class_weights=False,
+               normalise_embedding='l2', n_bands=4,
+               training_method='pecl', lr=1e-3, batch_size=64, n_epochs_max=20, 
+               image_folder=None, presence_csv=None,  # None will use default paths 
+               species_process='all',
+               pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
                use_lr_scheduler=False,
                verbose=1, fix_seed=42, use_mps=True,
                save_model=False, save_stats=True):
@@ -1034,6 +1038,7 @@ def train_pecl(model=None, n_enc_channels=32,
                             lr=lr, n_bands=n_bands, use_mps=use_mps,
                             use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
+                            alpha_ratio_loss=alpha_ratio_loss,
                             time_created=time_created, batch_size_used=batch_size,
                             verbose=verbose, seed_used=fix_seed)
     else:
@@ -1060,6 +1065,8 @@ def train_pecl(model=None, n_enc_channels=32,
         model.build_class_weights(class_weights=ds.weights_values if use_class_weights else None)
         model.build_training_method(training_method=training_method, pred_train_loss=pred_train_loss)
        
+        if freeze_resnet_fc_loaded_model:  # freezing resnet fc head. So needs to be tuned already (hence only for loaded model).
+            model.freeze_resnet_layers(freeze_all_but_last=freeze_resnet, freeze_last=True)
 
     cb_metrics = MetricsCallback()
     callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',

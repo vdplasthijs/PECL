@@ -86,19 +86,41 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     ax_map.axis('off')
     ax_map.set_title('UKBMS locations')
 
-def dataset_fig(ds, save_fig=False):
-    fig, ax = plt.subplots(2, 4, figsize=(10, 5), 
-                           gridspec_kw={'wspace': 0.5, 'hspace': 0.5})  
-    plot_stats_df_presence(ds, ax_hist_visits=ax[0, 0], ax_hist_species=ax[0, 1],
-                            ax_hist_species_log=ax[0, 2], ax_map=ax[0, 3])
-    
-    example_inds = [86, 190, 343, 1000]
+def dataset_fig(ds, save_fig=False,
+                example_inds=[86, 190, 343, 777, 898, 1000]):
+    # fig, ax = plt.subplots(2, 4, figsize=(10, 5), 
+    #                        gridspec_kw={'wspace': 0.5, 'hspace': 0.5})  
+    n_examples = len(example_inds)
+    fig = plt.figure(figsize=(10, 5))
+    gs_top = fig.add_gridspec(1, 4, wspace=0.5, hspace=0.5, top=0.95, bottom=0.55, left=0.05, right=0.98)
+    gs_bottom = fig.add_gridspec(1, n_examples, wspace=0.1, hspace=0.5, top=0.45, bottom=0.02, left=0.02, right=0.97)
+    ax_top = [fig.add_subplot(gs_top[i]) for i in range(4)]
+    ax_bottom = [fig.add_subplot(gs_bottom[i]) for i in range(n_examples)]
 
+    plot_stats_df_presence(ds, ax_hist_visits=ax_top[0], ax_hist_species=ax_top[1],
+                            ax_hist_species_log=ax_top[2], ax_map=ax_top[3])
+    
+    
     for i, ind in enumerate(example_inds):
-        ax_ = ax[1, i]
-        ds.plot_image(ind, ax=ax_)   
+        ax_ = ax_bottom[i]
+        ax_, species_ax = ds.plot_image(ind, ax=ax_)   
         ax_.set_title(f'Example {ind}')
         ax_.axis('off')
+
+        # if i == 0:
+            # ax_.set_ylabel('Example images')
+        # if i == n_examples - 1:
+        #     species_ax.set_ylabel('Species ID')
+
+    ax_.annotate('P(presence)', xy=(1.15, 0.5), xycoords='axes fraction', 
+                 va='center', ha='center',
+                 rotation=90)
+
+    plt.draw()
+    rfv.add_panel_label(ax_top[0], label_letter='a', fontsize=14)
+    rfv.add_panel_label(ax_top[1], label_letter='b', fontsize=14)
+    rfv.add_panel_label(ax_top[3], label_letter='c', fontsize=14)
+    rfv.add_panel_label(ax_bottom[0], label_letter='d', fontsize=14, x_offset=0.2)
 
     if save_fig:
         plt.savefig(os.path.join(fig_folder, 'dataset_overview.pdf'), dpi=300, bbox_inches='tight')
