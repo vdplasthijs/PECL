@@ -327,7 +327,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             targ_ax.set_yticks([])
         else:
             targ_ax = None
-            
+
         return ax, targ_ax
 
     def determine_mean_std_entire_ds(self, max_iter=100):
@@ -346,6 +346,33 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         std = im_aggr.std(dim=(0, 2, 3))
         print(mean, std)
         return mean, std
+
+    def split_into_train_val(self, filepath=None):
+        if filepath is None: 
+            train_ds, val_ds = torch.utils.data.random_split(self, [int(0.8 * len(self)), len(self) - int(0.8 * len(self))])
+        else:
+            assert os.path.exists(filepath), f'Filepath {filepath} does not exist.'
+            split_indices = torch.load(filepath)
+            train_ds = torch.utils.data.Subset(self, split_indices['train_indices'])
+            val_ds = torch.utils.data.Subset(self, split_indices['val_indices'])
+
+        train_ds.dataset.mode = 'train'
+        val_ds.dataset.mode = 'val'
+
+        return train_ds, val_ds
+    
+    def split_and_save(self):
+        train_ds, val_ds = self.split_into_train_val(filepath=None)
+            
+        # Save the split indices
+        split_indices = {
+            'train_indices': train_ds.indices,
+            'val_indices': val_ds.indices
+        }
+        timestamp = cdu.create_timestamp()
+        torch.save(split_indices, os.path.join(path_dict_pecl['repo'], f'content/split_indices_{timestamp}.pth'))
+        print(f'Saved split indices to split_indices_{timestamp}.pth')
+        return train_ds, val_ds
 
 class ImageEncoder(pl.LightningModule):
     '''
@@ -367,7 +394,7 @@ class ImageEncoder(pl.LightningModule):
                  n_layers_mlp_resnet=1, n_layers_mlp_pred=1,
                  pretrained_resnet='imagenet', freeze_resnet=True,
                  optimizer_name='Adam', resnet_version=18,
-                 pecl_distance_metric='cosine',
+                 pecl_distance_metric='softmax',
                  pred_train_loss='mse', class_weights=None,
                  lr=1e-3, pecl_knn=5, pecl_knn_hard_labels=False,
                  training_method='pecl', alpha_ratio_loss=None,
@@ -478,7 +505,7 @@ class ImageEncoder(pl.LightningModule):
             self.pred_train_loss = pred_train_loss
             self.name_train_loss = f'pred-{pred_train_loss}_pecl-{self.pecl_distance_metric}'
             assert self.alpha_ratio_loss is not None, 'Expecting alpha_ratio_loss to be set.'
-            assert self.alpha_ratio_loss > 0, 'Expecting alpha_ratio_loss to be > 0.'    
+            assert self.alpha_ratio_loss >= 0, 'Expecting alpha_ratio_loss to be >= 0.'    
             
             self.freeze_resnet_layers(freeze_all_but_last=self.freeze_resnet,
                                       freeze_last=False)
@@ -615,7 +642,7 @@ class ImageEncoder(pl.LightningModule):
         
         '''
         loss, im_enc = self.pecl_loss(im_enc, pres_vec)
-        return loss, im_enc
+        return loss, None, im_enc
 
     def pecl_loss(self, im_enc, pres_vec):
         if self.pecl_distance_metric == 'softmax':
@@ -625,7 +652,7 @@ class ImageEncoder(pl.LightningModule):
                 flatten_dist = True
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
-                                                                knn_hard_labels=self.pecl_knn_hard_labels)\
+                                                                knn_hard_labels=self.pecl_knn_hard_labels)
                                                                 
             # return dist_array_ims, dist_array_pres
             inds_one = torch.where(dist_array_pres > 0)
@@ -661,7 +688,7 @@ class ImageEncoder(pl.LightningModule):
                 im_enc = self.forward(im)
         pres_pred = self.prediction_model(im_enc)
         loss = self.pred_loss(pres_pred, pres_vec)
-        return loss, im_enc
+        return loss, None, im_enc
     
     def pred_and_pecl_pass(self, batch):
         '''Train the encoding model using the PECL method, and the prediction model.'''
@@ -679,7 +706,7 @@ class ImageEncoder(pl.LightningModule):
         loss_pred = self.pred_loss(pres_pred, pres_vec)
 
         loss = loss_pred + self.alpha_ratio_loss * loss_pecl
-        return loss, im_enc
+        return loss, (loss_pred, self.alpha_ratio_loss * loss_pecl), im_enc
 
     def pred_loss(self, pres_pred, pres_vec):
         if self.pred_train_loss == 'mse':
@@ -699,15 +726,24 @@ class ImageEncoder(pl.LightningModule):
         return loss
                 
     def training_step(self, batch, batch_idx):
-        loss, _ = self.forward_pass(batch)
+        loss, _, __ = self.forward_pass(batch)
         self.log(f'train_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
-            loss, im_enc = self.forward_pass(batch)
+            loss, split_loss, im_enc = self.forward_pass(batch)
             self.log(f'val_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)  # saving name loss function used so it can be recovered later
             self.log('val_loss', loss, on_epoch=True, on_step=False)  # also save as val_loss for tensorboard (and lr_scheduler etc)
+
+            ## Evaluate split loss:
+            if split_loss is not None:
+                loss_pred, loss_pecl = split_loss
+                self.log(f'val_pecl-{self.pecl_distance_metric}_loss', loss_pecl, on_epoch=True, on_step=False)
+                ratio = loss_pred / loss_pecl
+                self.log(f'val_ratio_pred_pecl', ratio, on_epoch=True, on_step=False)
+
+            ## Evaluate prediction:
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
             pres_vec = batch[1]
             assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
@@ -733,7 +769,7 @@ class ImageEncoder(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         with torch.no_grad():
-            loss, _ = self.forward_pass(batch)
+            loss, _, __ = self.forward_pass(batch)
             self.log(f'test_{self.name_train_loss}_loss', loss)
             assert False, 'Test step not implemented yet: incl accuracy/loss metrics from validation step.'
             return loss
@@ -912,7 +948,7 @@ def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename='', ver
 
 def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_denominator=True,
                                       flatten=True, knn=None, knn_hard_labels=False,
-                                      similarity_function='inner'):
+                                      similarity_function='inner', inner_prod_only=False):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
     assert temperature > 0, f'Temperature {temperature} should be > 0.'
     assert samples.ndim == 2, f'Expected 2D tensor, but got {samples.ndim}D tensor.'  # (batch, features)
@@ -926,14 +962,15 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
         assert False, f'Similarity function {similarity_function} not implemented.'
 
     inner_prod_mat = torch.mm(samples, samples.t())
-    inner_prod_mat = inner_prod_mat / temperature
-    inner_prod_mat = torch.exp(inner_prod_mat)
-    sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
-    if exclude_diag_in_denominator:
-        diag = torch.diag(inner_prod_mat)
-        sum_inner_prod_mat = sum_inner_prod_mat - diag
-    sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
-    inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
+    if inner_prod_only is False:
+        inner_prod_mat = inner_prod_mat / temperature
+        inner_prod_mat = torch.exp(inner_prod_mat)
+        sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
+        if exclude_diag_in_denominator:
+            diag = torch.diag(inner_prod_mat)
+            sum_inner_prod_mat = sum_inner_prod_mat - diag
+        sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
+        inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
 
     if knn is not None:
         assert flatten is False, 'Flatten should be False if KNN is used.'
@@ -982,8 +1019,9 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                image_folder=None, presence_csv=None,  # None will use default paths 
                species_process='all',
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
-               use_lr_scheduler=False,
+               use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
+               filepath_train_val_split=None,
                save_model=False, save_stats=True):
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
@@ -1017,8 +1055,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                               shuffle_order_data=True, species_process=species_process,
                               augment_image=True, 
                               n_bands=n_bands, zscore_im=True, mode='train')
-    train_ds, val_ds = torch.utils.data.random_split(ds, [int(0.8 * len(ds)), len(ds) - int(0.8 * len(ds))])
-    val_ds.dataset.mode = 'val'
+    train_ds, val_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
                           shuffle=True, persistent_workers=True) #drop_last=True, pin_memory=True
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
@@ -1072,6 +1109,8 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
                                             filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}"),
                  cb_metrics]
+    if stop_early:
+        callbacks.append(pl.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min'))
 
     trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use,
                          log_every_n_steps=5,  # train loss logging steps (each step = 1 batch)
@@ -1104,3 +1143,53 @@ class MetricsCallback(pl.Callback):
     def on_validation_epoch_end(self, trainer, pl_module):
         each_me = copy.deepcopy(trainer.callback_metrics)
         self.metrics.append(each_me)
+
+class MeanRates(ImageEncoder):
+    def __init__(self, train_ds, val_ds):
+        super().__init__(training_method='pred',
+                         class_weights=None,
+                         pred_train_loss='bce')
+        
+        self.train_ds = train_ds
+        self.val_ds = val_ds
+
+        self.calculate_mean_rates()
+        self.evaluate_val_losses()
+
+    def calculate_mean_rates(self):
+        print('Calculating mean rates for training and validation datasets.')
+        all_labels = []
+        for sample in tqdm(self.train_ds):
+            all_labels.append(sample[1][None, :])    
+           
+        all_labels = torch.cat(all_labels, dim=0)
+        print(f'All labels shape: {all_labels.shape}')
+        mean_rates = all_labels.mean(dim=0)
+        self.train_mean_rates = mean_rates
+        assert self.train_mean_rates.ndim == 1, self.train_mean_rates.shape
+        assert self.train_mean_rates.shape[0] == self.n_species, (self.train_mean_rates.shape, self.n_species)
+        assert (self.train_mean_rates >= 0).all(), self.train_mean_rates
+        assert (self.train_mean_rates <= 1).all(), self.train_mean_rates
+
+    def evaluate_val_losses(self):
+        print('Evaluating validation losses for validation dataset.')
+        val_loss_dict = {x: [] for x in ['mse', 'bce', 'top_5', 'top_10', 'top_20']}
+        all_val_labels = []
+        for sample in tqdm(self.val_ds):
+            all_val_labels.append(sample[1][None, :])
+        pres_vec = torch.cat(all_val_labels, dim=0)
+        len_batch = pres_vec.shape[0]
+
+        pred_rates = self.train_mean_rates[None, :].repeat(len_batch, 1)
+        assert pred_rates.shape == pres_vec.shape, (pred_rates.shape, pres_vec.shape)
+
+        mse_loss = F.mse_loss(pred_rates, pres_vec)
+        val_loss_dict['mse'].append(mse_loss.item())
+        bce_loss = nn.BCELoss(reduction='mean')(pred_rates, pres_vec)
+        val_loss_dict['bce'].append(bce_loss.item())
+        for k in [5, 10, 20]:
+            top_k_acc = self.top_k_accuracy(preds=pred_rates, target=pres_vec, k=k)
+            val_loss_dict[f'top_{k}'].append(top_k_acc.item())
+
+        self.val_loss_dict = val_loss_dict
+        print(f'Validation losses: {val_loss_dict}')
