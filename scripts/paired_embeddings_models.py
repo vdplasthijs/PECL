@@ -230,22 +230,25 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         if self.mode == 'train':
             augment_transforms = v2.Compose([v2.RandomHorizontalFlip(p=0.5),
                                          v2.RandomVerticalFlip(p=0.5),  
-                                         v2.RandomResizedCrop(size=224),
-                                        #   v2.RandomApply([
-                                        #       v2.ColorJitter(brightness=0.5,
-                                            #                 contrast=0.5,
-                                            #                 saturation=0.5,
-                                            #                 hue=0.1)
-                                                            # ], p=0.8),
-                                        #   v2.RandomGrayscale(p=0.2),
-                                        #   v2.GaussianBlur(kernel_size=9),
-                                        #   transforms.ToTensor(),
-                                        #   transforms.Normalize((0.5,), (0.5,))
+                                        #  v2.RandomResizedCrop(size=224),
+                                        v2.RandomCrop(size=224),
                                          ])
+            
+            # augment_transforms_3band = v2.Compose([
+            #                               v2.RandomApply([
+            #                                   v2.ColorJitter(brightness=0.5,
+            #                                                 contrast=0.5,
+            #                                                 saturation=0.5,
+            #                                                 hue=0.1)
+            #                                                 ], p=0.8),
+            #                             #   v2.RandomGrayscale(p=0.2),
+            #                               v2.GaussianBlur(kernel_size=9),
+            #                              ])
             im = augment_transforms(im)
+            # im[:3, :, :] = augment_transforms_3band(im[:3, :, :])
         elif self.mode == 'val':
             assert im.shape[1] == im.shape[2] == 256, f'Image shape {im.shape} not 256x256.'
-            im = im[:, 16:240, 16:240]  # Crop to centre 224x224
+            im = im[:, 16:240, 16:240]  # Crop to centre 224x224  #TODO; use v2 CentreCrop
         
         return im
 
