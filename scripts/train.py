@@ -13,15 +13,15 @@ if __name__ == '__main__':
 
     ## Hyperparameters to search over:
     training_method = ['pred_and_pecl']
-    species_process = ['all', 'top_20']
+    species_process = ['all']
     lr = [1e-3]
-    batch_size = [64]
-    pecl_knn = [2, 5]
+    batch_size = [32, 64, 128]
+    pecl_knn = [2]
     pecl_knn_hard_labels = [True]
-    pred_train_loss = ['bce', 'weighted-bce']
+    pred_train_loss = ['bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
-    fix_seed = [42]
+    fix_seed = [19, 86, 17]
     alpha_ratio_loss = [0, 0.1]
     freeze_resnet = [True]
 
@@ -73,7 +73,7 @@ if __name__ == '__main__':
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-02-29-2154.pth')
 
-        # if i_it < 11:
+        # if i_it != 2:
         #     continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
