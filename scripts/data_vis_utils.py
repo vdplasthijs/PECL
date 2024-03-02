@@ -124,3 +124,29 @@ def dataset_fig(ds, save_fig=False,
 
     if save_fig:
         plt.savefig(os.path.join(fig_folder, 'dataset_overview.pdf'), dpi=300, bbox_inches='tight')
+
+def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
+    assert type(all_labels) == np.ndarray
+    n_species = all_labels.shape[1]
+    n_labels = all_labels.shape[0]
+    print(f'Number of species: {n_species}, number of labels: {n_labels}')    
+
+    inner_prod = np.dot(all_labels, all_labels.T)
+    assert inner_prod.shape == (n_labels, n_labels)
+    triu_inds = np.triu_indices(n_labels, k=1)
+    inner_prod = inner_prod[triu_inds]
+    assert inner_prod.shape == (n_labels * (n_labels - 1) // 2, )
+    assert inner_prod.ndim == 1
+
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(2.5, 2.5))
+    _ = ax.hist(inner_prod, bins=100, histtype='step', edgecolor='k', linewidth=1.5)
+    ax.set_xlabel('cos similarity ' + r'$s_{ij}$')
+    ax.set_ylabel('Number of pairs')
+    rfv.despine(ax)
+
+    if save_fig:
+        plt.savefig(os.path.join(fig_folder, 'distr_inner_prod_labels.pdf'),
+                                 bbox_inches='tight')
+
+    return ax
