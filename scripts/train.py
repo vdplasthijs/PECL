@@ -15,14 +15,14 @@ if __name__ == '__main__':
     training_method = ['pred_and_pecl']
     species_process = ['all']
     lr = [1e-3]
-    batch_size = [32, 64, 128]
-    pecl_knn = [2]
+    batch_size = [64]
+    pecl_knn = [1, 2, 5]
     pecl_knn_hard_labels = [True]
     pred_train_loss = ['bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
     fix_seed = [19, 86, 17]
-    alpha_ratio_loss = [0, 0.1]
+    alpha_ratio_loss = [0.01, 0.02, 0.05, 0.1, 0.2]
     freeze_resnet = [True]
 
     ## Create all combinations of hyperparameters:
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     n_combinations = len(iterator)
     print('Combinations will be run in this order:\n---------')
     for i, args in enumerate(iterator):
-        print(f'-- iteration {i + 1}: {args}')
+        print(f'- iteration {i + 1}: {args}')
     print('-------------------\n\n')
 
     i_it = 0

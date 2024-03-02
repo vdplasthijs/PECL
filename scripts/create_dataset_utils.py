@@ -115,6 +115,8 @@ def plot_obs_per_location(df, col_interest='footprintWKT'):
         arr_n_obs_total[i] = n_obs
     ax[2].plot(arr_threshold, arr_n_obs_total, 'o-')
 
+    return count_obs_per_point
+
 def clean_bms_data(df, threshold_n_obs_per_location=200, col_location='footprintWKT',
                     verbose=1):
     count_obs_per_point = count_rows_per_unique_val(df, col_interest=col_location)
