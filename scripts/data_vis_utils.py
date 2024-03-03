@@ -13,9 +13,20 @@ import rioxarray as rxr
 import xarray as xr
 import shapely.geometry
 import matplotlib.pyplot as plt
+import matplotlib
 import torch
 import torch.nn.functional as F
 import paired_embeddings_models as pem
+
+from cycler import cycler
+## Create list with standard colors:
+import seaborn as sns
+plt.rcParams['axes.prop_cycle'] = cycler(color=sns.color_palette('colorblind'))
+color_dict_stand = {}
+for ii, x in enumerate(plt.rcParams['axes.prop_cycle']()):
+    color_dict_stand[ii] = x['color']
+    if ii > 8:
+        break  # after 8 it repeats (for ever)
 
 sys.path.append('/Users/t.vanderplas/repos/reproducible_figures/scripts/')
 import rep_fig_vis as rfv
@@ -83,7 +94,7 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     point_locs = [shapely.geometry.Point(ast.literal_eval(loc)) for loc in point_locs]
     gdf_bms = gpd.GeoDataFrame(geometry=point_locs)
 
-    gdf_bms.plot(ax=ax_map, color='r', markersize=0.5)
+    gdf_bms.plot(ax=ax_map, markersize=0.5, color=color_dict_stand[0])
     ax_map.set_aspect('equal')
     ax_map.set_xlim(-8.2, 2)
     ax_map.set_ylim(49, 61)
@@ -145,11 +156,12 @@ def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(2.5, 2.5))
     _ = ax.hist(inner_prod, bins=100, histtype='step', linewidth=1.5, # edgecolor='k',
-                density=True, label='cos sim')
-    
+                density=True, label=r"$\cos$", edgecolor=color_dict_stand[0])
     _ = ax.hist(np.power(inner_prod, 2), bins=100, histtype='step', linewidth=1.5, # edgecolor='k',
-                density=True, label='pow cos sim')
-    ax.legend()
+                density=True, label=r"$\cos^2$", edgecolor=color_dict_stand[1]) 
+    handles = [matplotlib.lines.Line2D([], [], c=color_dict_stand[ii]) for ii in range(2)]
+    ax.legend(handles=handles, labels=[r"$\cos$", r"$\cos^2$"], loc='upper left', 
+              frameon=False, bbox_to_anchor=(0.05, 1.15))
     ax.set_xlabel('cos similarity ' + r'$s_{ij}$')
     # ax.set_ylabel('Number of pairs')
     ax.set_ylabel('Density of pairs')
@@ -202,7 +214,7 @@ def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
     hparams_use = [h for h in  example_stats['hparams'].keys() if h not in hparams_exclude]
 
     metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
-    metrics_use_min = ['val_bce_loss', 'val_mse_loss', 'val_pecl-softmax_loss']
+    metrics_use_min = ['val_bce_loss', 'val_mse_loss']
 
     metrics_use = metrics_use_max + metrics_use_min
     assert metric_optimise in metrics_use, f'Optimisation metric {metric_optimise} not in metrics_use'
@@ -212,6 +224,7 @@ def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
         tmp_stats = dict_stats[ts]
         tmp_hparams = tmp_stats['hparams']
         tmp_df_metrics = tmp_stats['df_metrics']
+        print(tmp_stats['df_metrics'].columns)
 
         if i_ts == 0:
             hparams_previous = tmp_hparams.keys()
@@ -226,6 +239,10 @@ def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
             ind_epoch_best = tmp_df_metrics[metric_optimise].idxmin()
 
         tmp_metrics = tmp_df_metrics.loc[ind_epoch_best]
+        for h in hparams_use:
+            assert h in tmp_hparams.keys(), f'Hyperparameter {h} not in tmp_hparams'
+        for m in metrics_use:
+            assert m in tmp_df_metrics.columns, f'Metric {m} not in tmp_df_metrics'
         tmp_row = [ts] + [tmp_hparams[h] for h in hparams_use] + [tmp_metrics[m] for m in metrics_use]
         df.loc[len(df)] = tmp_row
 
@@ -248,7 +265,7 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
     dict_rename_hparams = {
         'species_process': 'Species',
         'alpha_ratio_loss': r"$\alpha$",
-        'batch_size_used': 'Batch size',
+        'batch_size_used': 'Batch',
         'fix_seed': 'Seed',
         'freeze_resnet': 'Freeze Res',
         'lr': 'Learning rate',
@@ -276,7 +293,14 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
             print(f'Hyperparameter {h} has {n_unique} unique values')
     df_num_val = df_num_val.drop(columns=cols_drop)
     # print(cols_vals_all_same)
-    cols_multiple_values.remove(col_seed)
+    if col_seed in cols_multiple_values:
+        cols_multiple_values.remove(col_seed)
+        multiple_seeds = True
+    else:
+        assert col_seed in cols_vals_all_same.keys(), f'Column {col_seed} not in cols_vals_all_same'
+        print(f'Column {col_seed} has only one unique value: {cols_vals_all_same[col_seed]}')
+        multiple_seeds = False
+    
     if hparam_show == []:
         hparam_show = cols_multiple_values
         print(f'No hyperparameters to show specified, using {hparam_show}')
@@ -290,10 +314,11 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
     df_num_val = df_num_val.drop(columns=['timestamp'])
 
     ## compute mean and sem across seeds:
-    assert col_seed in df_num_val.columns
-    assert df_num_val[col_seed].nunique() > 1
-    df_num_val = df_num_val.drop(columns=[col_seed])
-    df_num_val = df_num_val.groupby(hparam_show).agg(['mean', 'sem'])#.reset_index()
+    if multiple_seeds:
+        assert col_seed in df_num_val.columns
+        assert df_num_val[col_seed].nunique() > 1
+        df_num_val = df_num_val.drop(columns=[col_seed])
+    df_num_val = df_num_val.groupby(hparam_show).agg(['mean', 'sem'])  # mean and sem across seeds. With only one seed, sem is NaN
 
     ## Find all columns that arent hparams & rewrite to mean pm sem
     cols_metrics = []
@@ -321,7 +346,7 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
             if scale == 1:
                 new_name = m 
             else:   
-                new_name = m + f' [{scale:.0e}]'
+                new_name = m + f' [{1 / scale:.0e}]'
         col_renaming_dict[m] = new_name
         scaled_col = df_num_val[m] * scale
         if n_decimals == 2:
@@ -360,6 +385,36 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
         assert filename.endswith('.tex'), f'Filename {filename} does not end with .tex'
         path_save = os.path.join(folder_save, filename)
         df_tex.to_latex(path_save, index=False, escape=False, na_rep='NaN',
-                        caption=caption_tex, label=label_tex, position=position_tex)
+                caption=caption_tex, label=label_tex, position=position_tex)
 
     return df_num_val, df_tex
+
+def print_table_batchsize():
+
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=np.arange(199, 217)
+    ))
+
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different batch sizes. ' \
+              'The best performing model for each metric is highlighted in bold.'
+
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                           metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
+                           save_table=True, filename='tab_batch-size.tex', highlight_best_row=True,
+                           label_tex='tab:batch_size', caption_tex=caption)
+    
+    return (df_num_val, df_tex)
+
+def print_table_alpha():
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=np.arange(164, 171)
+    ))
+
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different values of the $\alpha$ ratio loss hyperparameter. ' \
+              'The best performing model for each metric is highlighted in bold.'
+    
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                            metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
+                            save_table=True, filename='tab_alpha-ratio.tex', highlight_best_row=True,
+                            label_tex='tab:alpha_ratio', caption_tex=caption)
+    return (df_num_val, df_tex)

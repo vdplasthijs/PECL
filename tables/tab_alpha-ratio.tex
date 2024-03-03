@@ -1,0 +1,17 @@
+\begin{table}[h]
+\caption{Mean and standard error of the mean (SEM) of validation metrics for different values of the $lpha$ ratio loss hyperparameter. The best performing model for each metric is highlighted in bold.}
+\label{tab:alpha_ratio}
+\begin{tabular}{llll}
+\toprule
+$\alpha$ & Top-10 [\%] & Top-5 [\%] & MSE [1e-02] \\
+\midrule
+0.0 & 70.8 $\pm$ nan & 60.8 $\pm$ nan & 1.21 $\pm$ nan \\
+0.02 & 71.0 $\pm$ nan & 61.7 $\pm$ nan & \textbf{1.21 $\pm$ nan} \\
+0.05 & 71.0 $\pm$ nan & 61.4 $\pm$ nan & 1.22 $\pm$ nan \\
+0.1 & 71.1 $\pm$ nan & \textbf{62.0 $\pm$ nan} & 1.22 $\pm$ nan \\
+0.2 & \textbf{71.1 $\pm$ nan} & 61.5 $\pm$ nan & 1.23 $\pm$ nan \\
+0.5 & 70.6 $\pm$ nan & 61.5 $\pm$ nan & 1.24 $\pm$ nan \\
+1.0 & 71.0 $\pm$ nan & 61.6 $\pm$ nan & 1.25 $\pm$ nan \\
+\bottomrule
+\end{tabular}
+\end{table}
