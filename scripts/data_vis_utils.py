@@ -174,6 +174,19 @@ def stack_all_labels(ds, normalise=True):
     all_labels = all_labels.detach().cpu().numpy()
     return all_labels, all_labels_norm
 
+def get_list_timestamps_from_vnums(list_vnums, path_stats='/Users/t.vanderplas/models/PECL/stats/'):
+    assert type(list_vnums) in [list, np.ndarray], f'Expected list, got {type(list_vnums)}'
+    list_timestamps = []
+    contents_folder = os.listdir(path_stats)
+    contents_folder = [x for x in contents_folder if x.endswith('.pkl')]
+    for vnum in list_vnums:
+        assert type(vnum) in [int, np.int64], f'Expected int, got {type(vnum)}'
+        list_candidates = [x for x in contents_folder if f'vnum-{vnum}' in x]
+        assert len(list_candidates) == 1, f'Expected 1 candidate, got {len(list_candidates)}'
+        list_timestamps.append(list_candidates[0])
+    assert len(list_timestamps) == len(list_vnums), f'Expected {len(list_vnums)} timestamps, got {len(list_timestamps)}'
+    return list_timestamps
+
 def load_list_timestamps(list_ts):
     assert type(list_ts) == list, f'Expected list, got {type(list_ts)}'
     dict_stats = {}
@@ -220,62 +233,133 @@ def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
 
 def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_top_10_acc',
                            hparam_show=[], metrics_show=['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss'],
-                           col_seed='seed_used'):
-    df_print = df.copy()
+                           col_seed='seed_used', save_table=False, filename=None,
+                           folder_save=os.path.join(path_dict_pecl['repo'], 'tables/'),
+                           caption_tex=None, label_tex=None, position_tex='h',
+                           highlight_best_row=False):
+    
+    dict_rename_metrics = {'val_top_20_acc': 'Top-20',
+                    'val_top_10_acc': 'Top-10',
+                    'val_top_5_acc': 'Top-5',
+                    'val_top_1_acc': 'Top-1',
+                    'val_bce_loss': 'BCE',
+                    'val_mse_loss': 'MSE',
+                    'val_pecl-softmax_loss': 'PECL'}
+    dict_rename_hparams = {
+        'species_process': 'Species',
+        'alpha_ratio_loss': r"$\alpha$",
+        'batch_size_used': 'Batch size',
+        'fix_seed': 'Seed',
+        'freeze_resnet': 'Freeze Res',
+        'lr': 'Learning rate',
+        'n_enc_channels': 'Channels',
+        'pecl_knn': 'KNN',
+        'pecl_knn_hard_labels': 'Hard labels'
+        }
     unique_vals_ignore = ['time_created', 'n_epochs_converged']
+    
+    ## Drop hparams with only one unique value (not relevant for comparison)
+    df_num_val = df.copy()  # this df will be reformatted, but maintain numeric values (while df_tex will be formatted as str for latex)
     cols_drop = []
-    vals_all_same = {}
+    cols_vals_all_same = {}
+    cols_multiple_values = []
     for h in hparams_use:
         if h in unique_vals_ignore:
             cols_drop.append(h)
             continue 
-        n_unique = df_print[h].nunique()
+        n_unique = df_num_val[h].nunique()
         if n_unique == 1:
-            vals_all_same[h] = df_print[h].unique()[0]
+            cols_vals_all_same[h] = df_num_val[h].unique()[0]
             cols_drop.append(h)
         else:
+            cols_multiple_values.append(h)
             print(f'Hyperparameter {h} has {n_unique} unique values')
-    df_print = df_print.drop(columns=cols_drop)
-    print(vals_all_same)
-    # return df_print
-    
+    df_num_val = df_num_val.drop(columns=cols_drop)
+    # print(cols_vals_all_same)
+    cols_multiple_values.remove(col_seed)
+    if hparam_show == []:
+        hparam_show = cols_multiple_values
+        print(f'No hyperparameters to show specified, using {hparam_show}')
+
+    ## Drop metrics not in metrics_show  
     for m in metrics_use:
         if m not in metrics_show:
-            df_print = df_print.drop(columns=[m])
+            df_num_val = df_num_val.drop(columns=[m])
 
-    dict_rename = {'val_top_20_acc': 'Top 20 acc',
-                    'val_top_10_acc': 'Top 10 acc',
-                    'val_top_5_acc': 'Top 5 acc',
-                    'val_top_1_acc': 'Top 1 acc',
-                    'val_bce_loss': 'BCE loss',
-                    'val_mse_loss': 'MSE loss',
-                    'val_pecl-softmax_loss': 'PECL loss'}
-    dict_rename = {k: v for k, v in dict_rename.items() if k in df_print.columns}
-    df_print = df_print.rename(columns=dict_rename)
-    df_print = df_print.drop(columns=['timestamp'])
+    df_num_val = df_num_val.rename(columns=dict_rename_metrics)
+    df_num_val = df_num_val.drop(columns=['timestamp'])
 
     ## compute mean and sem across seeds:
-    assert col_seed in df_print.columns
-    assert df_print[col_seed].nunique() > 1
-    df_print = df_print.drop(columns=[col_seed])
-    df_print = df_print.groupby(hparam_show).agg(['mean', 'sem'])#.reset_index()
+    assert col_seed in df_num_val.columns
+    assert df_num_val[col_seed].nunique() > 1
+    df_num_val = df_num_val.drop(columns=[col_seed])
+    df_num_val = df_num_val.groupby(hparam_show).agg(['mean', 'sem'])#.reset_index()
 
     ## Find all columns that arent hparams & rewrite to mean pm sem
     cols_metrics = []
-    for m in df_print.columns:
-        print(m)
-        if m[0] in hparam_show:
+    for m in df_num_val.columns:
+        # print(m)
+        if m[0] in hparams_use:
             continue
         else:
-            if m[0] not in cols_metrics:
+            if m[0] not in cols_metrics:  # avoid duplicates because of mean and sem
                 cols_metrics.append(m[0])
     
-    tmp_dict = {}
+    ## Scale and format values
+    formatted_vals_dict = {}
+    col_renaming_dict = {}
     for m in cols_metrics:
-        tmp_dict[m] = df_print[m].apply(lambda x: f'{x["mean"]:.3f} ' +r"$\pm$" + f' {x["sem"]:.3f}', axis=1)
+        if 'Top-' in m:
+            scale = 100 
+            new_name = m + ' [\%]'
+            n_decimals = 1
+        else:    
+            max_val = df_num_val[m].loc[:, ('mean')].max()
+            ## scale so that first digit is before decimal point
+            scale = 10 ** -(int(np.log10(max_val)) - 1)
+            n_decimals = 2
+            if scale == 1:
+                new_name = m 
+            else:   
+                new_name = m + f' [{scale:.0e}]'
+        col_renaming_dict[m] = new_name
+        scaled_col = df_num_val[m] * scale
+        if n_decimals == 2:
+            formatted_vals_dict[new_name] = scaled_col.apply(lambda x: f'{x["mean"]:.2f} ' + r"$\pm$" + f' {x["sem"]:.2f}', axis=1)
+        elif n_decimals == 1:
+            formatted_vals_dict[new_name] = scaled_col.apply(lambda x: f'{x["mean"]:.1f} ' + r"$\pm$" + f' {x["sem"]:.1f}', axis=1)
+        else:
+            assert False, f'Unexpected number of decimals: {n_decimals}'
+    df_tex = pd.DataFrame(formatted_vals_dict)
+    df_tex = df_tex.reset_index()
+    df_num_val = df_num_val.reset_index()
 
-    new_df = pd.DataFrame(tmp_dict)
-    new_df = new_df.reset_index()
-    df_print = df_print.round(3)
+    if highlight_best_row:
+        metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
+        metrics_use_min = ['val_bce_loss', 'val_mse_loss', 'val_pecl-softmax_loss']
+        metrics_use_max = [dict_rename_metrics[m] for m in metrics_use_max]
+        metrics_use_min = [dict_rename_metrics[m] for m in metrics_use_min]
+        for m in metrics_use_max + metrics_use_min:
+            if m not in df_num_val.droplevel(1, axis=1).columns:
+                continue
+            if m in metrics_use_max:
+                best_row = df_num_val[m]['mean'].idxmax()
+            elif m in metrics_use_min:
+                best_row = df_num_val[m]['mean'].idxmin()
+            new_val = '\\textbf{' + df_tex[col_renaming_dict[m]].loc[best_row] + '}'
+            df_tex.at[best_row, col_renaming_dict[m]] = new_val
+   
+    df_tex = df_tex.rename(columns=dict_rename_hparams)
+    for c in df_tex.columns:
+        if df_tex[c].dtype == 'float64' or df_tex[c].dtype == 'float32':
+            df_tex[c] = df_tex[c].apply(lambda x: str(x))
 
-    return df_print, new_df
+    if save_table:
+        assert filename is not None, 'Filename not specified'
+        assert os.path.exists(folder_save), f'Folder {folder_save} does not exist'
+        assert filename.endswith('.tex'), f'Filename {filename} does not end with .tex'
+        path_save = os.path.join(folder_save, filename)
+        df_tex.to_latex(path_save, index=False, escape=False, na_rep='NaN',
+                        caption=caption_tex, label=label_tex, position=position_tex)
+
+    return df_num_val, df_tex
