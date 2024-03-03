@@ -13,6 +13,9 @@ import rioxarray as rxr
 import xarray as xr
 import shapely.geometry
 import matplotlib.pyplot as plt
+import torch
+import torch.nn.functional as F
+
 
 sys.path.append('/Users/t.vanderplas/repos/reproducible_figures/scripts/')
 import rep_fig_vis as rfv
@@ -80,26 +83,31 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     point_locs = [shapely.geometry.Point(ast.literal_eval(loc)) for loc in point_locs]
     gdf_bms = gpd.GeoDataFrame(geometry=point_locs)
 
-    gdf_bms.plot(ax=ax_map, color='r', markersize=1)
+    gdf_bms.plot(ax=ax_map, color='r', markersize=0.5)
     ax_map.set_aspect('equal')
-    ax_map.set_xlim(-8, 2)
+    ax_map.set_xlim(-8.2, 2)
+    ax_map.set_ylim(49, 61)
     ax_map.axis('off')
-    ax_map.set_title('UKBMS locations')
+    ax_map.legend(['S2-BMS location'], loc='lower left', fontsize=8, bbox_to_anchor=(0, -.25))
+    # ax_map.set_title('UKBMS locations')
 
-def dataset_fig(ds, save_fig=False,
+def dataset_fig(ds, all_labels=None, save_fig=False,
                 example_inds=[86, 190, 343, 777, 898, 1000]):
-    # fig, ax = plt.subplots(2, 4, figsize=(10, 5), 
-    #                        gridspec_kw={'wspace': 0.5, 'hspace': 0.5})  
+    
     n_examples = len(example_inds)
-    fig = plt.figure(figsize=(10, 5))
-    gs_top = fig.add_gridspec(1, 4, wspace=0.5, hspace=0.5, top=0.95, bottom=0.55, left=0.05, right=0.98)
+    n_plots_top = 5
+    fig = plt.figure(figsize=(10, 4))
+    gs_top = fig.add_gridspec(1, n_plots_top, wspace=0.5, hspace=0.5, top=0.95, bottom=0.6, left=0.02, right=0.98)
     gs_bottom = fig.add_gridspec(1, n_examples, wspace=0.1, hspace=0.5, top=0.45, bottom=0.02, left=0.02, right=0.97)
-    ax_top = [fig.add_subplot(gs_top[i]) for i in range(4)]
+    ax_top = [fig.add_subplot(gs_top[i]) for i in range(n_plots_top)]
     ax_bottom = [fig.add_subplot(gs_bottom[i]) for i in range(n_examples)]
 
-    plot_stats_df_presence(ds, ax_hist_visits=ax_top[0], ax_hist_species=ax_top[1],
-                            ax_hist_species_log=ax_top[2], ax_map=ax_top[3])
-    
+    plot_stats_df_presence(ds, ax_hist_visits=ax_top[1], ax_hist_species=ax_top[2],
+                            ax_hist_species_log=ax_top[3], ax_map=ax_top[0])
+    if all_labels is not None:
+        ax_ = ax_top[4]
+        plot_distr_label_inner_prod(all_labels, ax=ax_)
+
     
     for i, ind in enumerate(example_inds):
         ax_ = ax_bottom[i]
@@ -107,26 +115,22 @@ def dataset_fig(ds, save_fig=False,
         ax_.set_title(f'Example {ind}')
         ax_.axis('off')
 
-        # if i == 0:
-            # ax_.set_ylabel('Example images')
-        # if i == n_examples - 1:
-        #     species_ax.set_ylabel('Species ID')
-
     ax_.annotate('P(presence)', xy=(1.15, 0.5), xycoords='axes fraction', 
                  va='center', ha='center',
                  rotation=90)
 
     plt.draw()
-    rfv.add_panel_label(ax_top[0], label_letter='a', fontsize=14)
+    rfv.add_panel_label(ax_top[0], label_letter='a', fontsize=14, x_offset=0.2)
     rfv.add_panel_label(ax_top[1], label_letter='b', fontsize=14)
-    rfv.add_panel_label(ax_top[3], label_letter='c', fontsize=14)
-    rfv.add_panel_label(ax_bottom[0], label_letter='d', fontsize=14, x_offset=0.2)
+    rfv.add_panel_label(ax_top[2], label_letter='c', fontsize=14)
+    rfv.add_panel_label(ax_top[4], label_letter='d', fontsize=14)
+    rfv.add_panel_label(ax_bottom[0], label_letter='e', fontsize=14, x_offset=0.2)
 
     if save_fig:
         plt.savefig(os.path.join(fig_folder, 'dataset_overview.pdf'), dpi=300, bbox_inches='tight')
 
 def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
-    assert type(all_labels) == np.ndarray
+    assert type(all_labels) == np.ndarray, f'Expected numpy array, got {type(all_labels)}'
     n_species = all_labels.shape[1]
     n_labels = all_labels.shape[0]
     print(f'Number of species: {n_species}, number of labels: {n_labels}')    
@@ -140,9 +144,11 @@ def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
 
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(2.5, 2.5))
-    _ = ax.hist(inner_prod, bins=100, histtype='step', edgecolor='k', linewidth=1.5)
+    _ = ax.hist(inner_prod, bins=100, histtype='step', linewidth=1.5, # edgecolor='k',
+                density=True)
     ax.set_xlabel('cos similarity ' + r'$s_{ij}$')
-    ax.set_ylabel('Number of pairs')
+    # ax.set_ylabel('Number of pairs')
+    ax.set_ylabel('Density of pairs')
     rfv.despine(ax)
 
     if save_fig:
@@ -150,3 +156,16 @@ def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
                                  bbox_inches='tight')
 
     return ax
+
+def stack_all_labels(ds, normalise=True):
+    all_labels = []
+    for sample in tqdm(ds):
+        all_labels.append(sample[1][None, :])
+    all_labels = torch.cat(all_labels, dim=0)
+    if normalise:
+        all_labels_norm = F.normalize(all_labels, p=2, dim=1)
+        all_labels_norm = all_labels_norm.detach().cpu().numpy()
+    else:
+        all_labels_norm = None
+    all_labels = all_labels.detach().cpu().numpy()
+    return all_labels, all_labels_norm
