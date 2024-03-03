@@ -939,8 +939,15 @@ def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vander
     # return model
     assert False, 'Not implemented yet.'
 
-def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename='', verbose=1):
+def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename=None, timestamp=None, verbose=1):
     '''Load previously saved (pickled) stats'''
+    assert (filename is not None and timestamp is None) or (filename is None and timestamp is not None), 'Provide either filename or timestamp, not both.'
+    if filename is None:
+        list_files = os.listdir(folder)
+        list_files = [f for f in list_files if f.endswith('.pkl')]
+        list_files = [f for f in list_files if timestamp in f]
+        assert len(list_files) == 1, f'Expected 1 file with timestamp {timestamp}, but got {len(list_files)}'
+        filename = list_files[0]
     assert filename != '', 'Filename not provided.'
     assert filename.endswith('.pkl'), f'Filename {filename} should end with .pkl'
     with open(os.path.join(folder, filename), 'rb') as f:

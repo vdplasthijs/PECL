@@ -15,7 +15,7 @@ import shapely.geometry
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
-
+import paired_embeddings_models as pem
 
 sys.path.append('/Users/t.vanderplas/repos/reproducible_figures/scripts/')
 import rep_fig_vis as rfv
@@ -141,11 +141,15 @@ def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
     inner_prod = inner_prod[triu_inds]
     assert inner_prod.shape == (n_labels * (n_labels - 1) // 2, )
     assert inner_prod.ndim == 1
-
+    print(f'Inner product shape: {inner_prod.shape}')
     if ax is None:
         fig, ax = plt.subplots(1, 1, figsize=(2.5, 2.5))
     _ = ax.hist(inner_prod, bins=100, histtype='step', linewidth=1.5, # edgecolor='k',
-                density=True)
+                density=True, label='cos sim')
+    
+    _ = ax.hist(np.power(inner_prod, 2), bins=100, histtype='step', linewidth=1.5, # edgecolor='k',
+                density=True, label='pow cos sim')
+    ax.legend()
     ax.set_xlabel('cos similarity ' + r'$s_{ij}$')
     # ax.set_ylabel('Number of pairs')
     ax.set_ylabel('Density of pairs')
@@ -169,3 +173,109 @@ def stack_all_labels(ds, normalise=True):
         all_labels_norm = None
     all_labels = all_labels.detach().cpu().numpy()
     return all_labels, all_labels_norm
+
+def load_list_timestamps(list_ts):
+    assert type(list_ts) == list, f'Expected list, got {type(list_ts)}'
+    dict_stats = {}
+    for ts in list_ts:
+        tmp_stats = pem.load_stats(timestamp=ts)
+        dict_stats[ts] = tmp_stats
+    return dict_stats
+
+def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
+    dict_stats = load_list_timestamps(list_ts)
+    example_stats = dict_stats[list_ts[0]]
+    hparams_exclude = ['class_weights']
+    hparams_use = [h for h in  example_stats['hparams'].keys() if h not in hparams_exclude]
+
+    metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
+    metrics_use_min = ['val_bce_loss', 'val_mse_loss', 'val_pecl-softmax_loss']
+
+    metrics_use = metrics_use_max + metrics_use_min
+    assert metric_optimise in metrics_use, f'Optimisation metric {metric_optimise} not in metrics_use'
+
+    df = pd.DataFrame(columns=['timestamp'] + hparams_use + metrics_use)
+    for i_ts, ts in enumerate(list_ts):
+        tmp_stats = dict_stats[ts]
+        tmp_hparams = tmp_stats['hparams']
+        tmp_df_metrics = tmp_stats['df_metrics']
+
+        if i_ts == 0:
+            hparams_previous = tmp_hparams.keys()
+            metrics_previous = tmp_df_metrics.columns
+        else:
+            assert hparams_previous == tmp_hparams.keys(), 'Hyperparameters not consistent'
+            assert np.all(metrics_previous == tmp_df_metrics.columns), 'Metrics not consistent'
+
+        if metric_optimise in metrics_use_max:
+            ind_epoch_best = tmp_df_metrics[metric_optimise].idxmax()
+        else:
+            ind_epoch_best = tmp_df_metrics[metric_optimise].idxmin()
+
+        tmp_metrics = tmp_df_metrics.loc[ind_epoch_best]
+        tmp_row = [ts] + [tmp_hparams[h] for h in hparams_use] + [tmp_metrics[m] for m in metrics_use]
+        df.loc[len(df)] = tmp_row
+
+    return df, ('timestamp', hparams_use, metrics_use, metric_optimise)
+
+def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_top_10_acc',
+                           hparam_show=[], metrics_show=['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss'],
+                           col_seed='seed_used'):
+    df_print = df.copy()
+    unique_vals_ignore = ['time_created', 'n_epochs_converged']
+    cols_drop = []
+    vals_all_same = {}
+    for h in hparams_use:
+        if h in unique_vals_ignore:
+            cols_drop.append(h)
+            continue 
+        n_unique = df_print[h].nunique()
+        if n_unique == 1:
+            vals_all_same[h] = df_print[h].unique()[0]
+            cols_drop.append(h)
+        else:
+            print(f'Hyperparameter {h} has {n_unique} unique values')
+    df_print = df_print.drop(columns=cols_drop)
+    print(vals_all_same)
+    # return df_print
+    
+    for m in metrics_use:
+        if m not in metrics_show:
+            df_print = df_print.drop(columns=[m])
+
+    dict_rename = {'val_top_20_acc': 'Top 20 acc',
+                    'val_top_10_acc': 'Top 10 acc',
+                    'val_top_5_acc': 'Top 5 acc',
+                    'val_top_1_acc': 'Top 1 acc',
+                    'val_bce_loss': 'BCE loss',
+                    'val_mse_loss': 'MSE loss',
+                    'val_pecl-softmax_loss': 'PECL loss'}
+    dict_rename = {k: v for k, v in dict_rename.items() if k in df_print.columns}
+    df_print = df_print.rename(columns=dict_rename)
+    df_print = df_print.drop(columns=['timestamp'])
+
+    ## compute mean and sem across seeds:
+    assert col_seed in df_print.columns
+    assert df_print[col_seed].nunique() > 1
+    df_print = df_print.drop(columns=[col_seed])
+    df_print = df_print.groupby(hparam_show).agg(['mean', 'sem'])#.reset_index()
+
+    ## Find all columns that arent hparams & rewrite to mean pm sem
+    cols_metrics = []
+    for m in df_print.columns:
+        print(m)
+        if m[0] in hparam_show:
+            continue
+        else:
+            if m[0] not in cols_metrics:
+                cols_metrics.append(m[0])
+    
+    tmp_dict = {}
+    for m in cols_metrics:
+        tmp_dict[m] = df_print[m].apply(lambda x: f'{x["mean"]:.3f} ' +r"$\pm$" + f' {x["sem"]:.3f}', axis=1)
+
+    new_df = pd.DataFrame(tmp_dict)
+    new_df = new_df.reset_index()
+    df_print = df_print.round(3)
+
+    return df_print, new_df
