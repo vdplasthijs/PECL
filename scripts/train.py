@@ -12,20 +12,20 @@ if __name__ == '__main__':
     bool_stop_early = True
 
     ## Hyperparameters to search over:
-    training_method = ['pred_and_pecl']
+    training_method = ['pred']
     species_process = ['all']
-    lr = [1e-3]
-    batch_size = [64]
+    lr = [1e-3, 3e-4]
+    batch_size = [64], 
     pecl_knn = [2]
     pecl_knn_hard_labels = [True]
     pred_train_loss = ['bce']
-    pretrained_resnet = ['seco']
+    pretrained_resnet = ['imagenet', 'seco']
     n_enc_channels = [256] 
     fix_seed = [42, 17, 86]
-    alpha_ratio_loss = [0, 0.1]
+    alpha_ratio_loss = [0]
     freeze_resnet = [True]
     p_dropout = [0]
-    n_layers_mlp_pred = [2]
+    n_layers_mlp_pred = [1, 2, 3]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
@@ -68,14 +68,17 @@ if __name__ == '__main__':
         ## Constant hyperparameters:
         hyperparams['use_class_weights'] = True
         hyperparams['pecl_distance_metric'] = 'softmax'
-        hyperparams['n_epochs_max'] = 100
+        hyperparams['n_epochs_max'] = 50
         hyperparams['n_layers_mlp_resnet'] = 1
-        hyperparams['use_lr_scheduler'] = True
+        hyperparams['use_lr_scheduler'] = False
         hyperparams['normalise_embedding'] = 'l2'
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
-        hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1707.pth')
+        hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
+
+        # if i_it == 0:
+        #     continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
         list_vnums.append(tmp_model.v_num)

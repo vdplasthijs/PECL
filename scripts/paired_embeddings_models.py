@@ -813,6 +813,7 @@ class ImageEncoder(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         loss, _, __ = self.forward_pass(batch)
         self.log(f'train_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)
+        self.log('train_loss', loss, on_epoch=True, on_step=False)
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -928,7 +929,7 @@ class ImageEncoder(pl.LightningModule):
 
         return top_k_acc
     
-    def store_metrics(self, metrics):
+    def store_val_metrics(self, metrics):
         if self.df_metrics is not None:
             print('-- When saving metrics, df_metrics already exists. Appending to old_df_metrics.')
             if hasattr(self, 'old_df_metrics'):
@@ -963,6 +964,9 @@ class ImageEncoder(pl.LightningModule):
          
         self.df_metrics = pd.DataFrame(self.metric_arrays)
         return 
+    
+    def store_test_metrics(self, metrics):
+        self.test_metrics = metrics
 
     def save_stats(self, folder='/Users/t.vanderplas/models/PECL/stats/',
                    verbose=1):
@@ -985,7 +989,8 @@ class ImageEncoder(pl.LightningModule):
             'v_num': self.v_num,
             'log_dir': self.log_dir,
             'logger': self.logger.__dict__,
-            'df_metrics': self.df_metrics
+            'df_metrics': self.df_metrics,
+            'test_metrics': self.test_metrics,
         }
         self.filename = f'{self.model_name}_stats.pkl'
         self.filepath = os.path.join(folder, self.filename)
@@ -1042,14 +1047,14 @@ def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vander
         folder_ckpt = os.path.join(folder_v_num, 'checkpoints')
         contents_folder_ckpt = os.listdir(folder_ckpt)
         assert len(contents_folder_ckpt) == 1, f'Expected 1 file in folder {folder_ckpt}, but got {len(contents_folder_ckpt)}'
+        assert contents_folder_ckpt[0].endswith('.ckpt'), f'File {contents_folder_ckpt[0]} should end with .ckpt'
         filepath = os.path.join(folder_ckpt, contents_folder_ckpt[0])
     elif v_num is None:
         assert filepath is not None, 'Version number and filepath not provided.'
         assert filepath.endswith('.ckpt'), f'Filepath {filepath} should end with .ckpt'
         assert os.path.exists(filepath), f'File {filepath} does not exist.'
-    # model = ImageEncoder.load_from_checkpoint(filepath)
-    # return model
-    assert False, 'Not implemented yet.'
+    model = ImageEncoder.load_from_checkpoint(filepath)
+    return model
 
 def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename=None, timestamp=None, verbose=1):
     '''Load previously saved (pickled) stats'''
@@ -1098,7 +1103,9 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
         assert flatten is False, 'Flatten should be False if KNN is used.'
         assert type(knn) == int, f'Expected int for knn, but got {type(knn)}'
         assert knn > 0, f'Expected knn > 0, but got {knn}'
-        assert knn < samples.shape[0] - 1, f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}'
+        if knn < samples.shape[0] - 1:
+            print(f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}. This can happen if final batch of data loader happens to be very small. Ignoring PECL here.')
+            return torch.zeros_like(inner_prod_mat)
         inner_prod_mat = inner_prod_mat - torch.diag(inner_prod_mat.diag())  # set diagonal to 0 so it doesn't get picked with KNN
         knn_inner_prod_mat = torch.zeros_like(inner_prod_mat)
         inds_positive = torch.topk(inner_prod_mat, k=knn, dim=1, largest=True, sorted=False)[1]
@@ -1145,7 +1152,11 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None,
                save_model=False, save_stats=True):
-    assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
+    # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
+    if filepath_train_val_split is None:
+        filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
+        assert os.path.exists(filepath_train_val_split), f'File {filepath_train_val_split} does not exist.'
+
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
 
@@ -1188,6 +1199,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                              shuffle=False,  persistent_workers=True)
     else:
         test_dl = None
+        assert False, 'Test dataset not provided.'
 
     if model is None:
         time_created = cdu.create_timestamp(include_seconds=True)
@@ -1254,14 +1266,15 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     print(f'-- Finished training at {timestamp_end}.')
 
     if test_dl is not None:
-        trainer.test(test_dataloaders=test_dl)
+        trainer.test(dataloaders=test_dl, ckpt_path='best')
 
-    model.store_metrics(metrics=cb_metrics.metrics)
+    model.store_val_metrics(metrics=cb_metrics.metrics)
+    model.store_test_metrics(metrics=cb_metrics.test_metrics)
     if save_stats:
         model.save_stats(verbose=1)
     if save_model:
         model.save_model(verbose=1)
-    return model, (train_dl, val_dl)
+    return model, (train_dl, val_dl, test_dl)
 
 class MetricsCallback(pl.Callback):
     """PyTorch Lightning metric callback.
@@ -1271,10 +1284,15 @@ class MetricsCallback(pl.Callback):
     def __init__(self):
         super().__init__()
         self.metrics = []
+        self.test_metrics = []
 
     def on_validation_epoch_end(self, trainer, pl_module):
         each_me = copy.deepcopy(trainer.callback_metrics)
         self.metrics.append(each_me)
+
+    def on_test_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule) -> None:
+        each_me = copy.deepcopy(trainer.callback_metrics)
+        self.test_metrics.append(each_me)
 
 class MeanRates(ImageEncoder):
     def __init__(self, train_ds, val_ds):
