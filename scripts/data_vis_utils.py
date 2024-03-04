@@ -130,11 +130,10 @@ def plot_data_split_stats(path_split=os.path.join(path_dict_pecl['repo'], 'conte
     print(f'Number of test samples: {len(test_inds)},   fraction: {len(test_inds) / len(clusters):.2f}')
     return dataset_split, clusters
 
-
-
 def dataset_fig(ds, all_labels=None, save_fig=False,
-                example_inds=[86, 190, 343, 777, 898, 1000]):
-    
+                title_examples=True,
+                example_inds=[126, 1000, 167, 370, 457, 635]):
+    example_inds = np.sort(example_inds)
     n_examples = len(example_inds)
     n_plots_top = 5
     fig = plt.figure(figsize=(10, 4))
@@ -153,7 +152,10 @@ def dataset_fig(ds, all_labels=None, save_fig=False,
     for i, ind in enumerate(example_inds):
         ax_ = ax_bottom[i]
         ax_, species_ax = ds.plot_image(ind, ax=ax_)   
-        ax_.set_title(f'Example {ind}')
+        if title_examples:
+            ax_.set_title(f'Example #{ind}')
+        else:
+            ax_.set_title('')
         ax_.axis('off')
 
     ax_.annotate('P(presence)', xy=(1.15, 0.5), xycoords='axes fraction', 
@@ -215,6 +217,30 @@ def stack_all_labels(ds, normalise=True):
         all_labels_norm = None
     all_labels = all_labels.detach().cpu().numpy()
     return all_labels, all_labels_norm
+
+def get_mean_rates_results(use_precomputed=True, train_test_filepath='../../content/split_indices_2024-03-04-1831.pth'):
+    '''This takes a minute to compute, so have copy-pasted results for quick access.'''
+    
+    if use_precomputed:  # uses '../../content/split_indices_2024-03-04-1831.pth'
+        val_loss_dict = {'mae': [0.0647730901837349],
+                        'mse': [0.013860139064490795],
+                        'bce': [0.2443312406539917],
+                        'top_5': [0.5870967507362366],
+                        'top_10': [0.6731182336807251],
+                        'top_20': [0.8432795405387878]}
+    else:
+        ds = pem.DataSetImagePresence(image_folder='/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/',
+                              presence_csv='/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv',
+                              species_process='all',
+                              zscore_im=True, 
+                              augment_image=True, mode='val')
+
+        train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=train_test_filepath)
+        assert test_ds is not None, 'Test set not found'
+        mean_rates = pem.MeanRates(train_ds=train_ds, val_ds=test_ds)
+        val_loss_dict = mean_rates.val_loss_dict
+    return val_loss_dict
+
 
 def get_list_timestamps_from_vnums(list_vnums, path_stats='/Users/t.vanderplas/models/PECL/stats/'):
     assert type(list_vnums) in [list, np.ndarray], f'Expected list, got {type(list_vnums)}'
