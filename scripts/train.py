@@ -21,17 +21,18 @@ if __name__ == '__main__':
     pred_train_loss = ['bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
-    fix_seed = [17, 19, 86]
+    fix_seed = [42, 17, 86]
     alpha_ratio_loss = [0, 0.1]
     freeze_resnet = [True]
-    p_dropout = [0, 0.05, 0.1, 0.2, 0.3, 0.5]
+    p_dropout = [0]
+    n_layers_mlp_pred = [2]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
                                   n_enc_channels, lr, batch_size, pecl_knn, 
                                   pecl_knn_hard_labels, pred_train_loss, 
                                   pretrained_resnet, fix_seed, alpha_ratio_loss,
-                                  freeze_resnet, p_dropout))
+                                  freeze_resnet, p_dropout, n_layers_mlp_pred))
     n_combinations = len(iterator)
     print('Combinations will be run in this order:\n---------')
     for i, args in enumerate(iterator):
@@ -56,7 +57,8 @@ if __name__ == '__main__':
             'fix_seed': args[9],
             'alpha_ratio_loss': args[10],
             'freeze_resnet': args[11],
-            'p_dropout': args[12]
+            'p_dropout': args[12],
+            'n_layers_mlp_pred': args[13],
         }
 
         print(f'---- {i_it}/{n_combinations} ----')
@@ -68,16 +70,12 @@ if __name__ == '__main__':
         hyperparams['pecl_distance_metric'] = 'softmax'
         hyperparams['n_epochs_max'] = 100
         hyperparams['n_layers_mlp_resnet'] = 1
-        hyperparams['n_layers_mlp_pred'] = 2
         hyperparams['use_lr_scheduler'] = True
         hyperparams['normalise_embedding'] = 'l2'
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
-        hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-02-29-2154.pth')
-
-        # if i_it != 2:
-        #     continue
+        hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1707.pth')
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
         list_vnums.append(tmp_model.v_num)

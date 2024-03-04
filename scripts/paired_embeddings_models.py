@@ -1,5 +1,5 @@
 from json import encoder
-import os, sys, copy, shutil
+import os, sys, copy, shutil, ast
 import numpy as np
 from tqdm import tqdm
 import datetime, pickle
@@ -15,6 +15,10 @@ import shapely.geometry
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from sklearn.decomposition import PCA 
+from sklearn.cluster import DBSCAN
+from sklearn.model_selection import GroupShuffleSplit
+from geopy.distance import distance as geodist # avoid naming confusion
+from scipy.spatial.distance import cdist
 
 import torch
 from torch import nn
@@ -351,31 +355,94 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         return mean, std
 
     def split_into_train_val(self, filepath=None):
-        if filepath is None: 
-            train_ds, val_ds = torch.utils.data.random_split(self, [int(0.8 * len(self)), len(self) - int(0.8 * len(self))])
-        else:
-            assert os.path.exists(filepath), f'Filepath {filepath} does not exist.'
-            split_indices = torch.load(filepath)
-            train_ds = torch.utils.data.Subset(self, split_indices['train_indices'])
-            val_ds = torch.utils.data.Subset(self, split_indices['val_indices'])
+        assert filepath is not None 
+        assert os.path.exists(filepath), f'Filepath {filepath} does not exist.'
+        split_indices = torch.load(filepath)
+        train_ds = torch.utils.data.Subset(self, split_indices['train_indices'])
+        val_ds = torch.utils.data.Subset(self, split_indices['val_indices'])
 
         train_ds.dataset.mode = 'train'
         val_ds.dataset.mode = 'val'
-
-        return train_ds, val_ds
+        if 'test_indices' in split_indices.keys():
+            test_ds = torch.utils.data.Subset(self, split_indices['test_indices'])
+            test_ds.dataset.mode = 'val'
+        else:
+            test_ds = None
+        return train_ds, val_ds, test_ds
     
-    def split_and_save(self):
-        train_ds, val_ds = self.split_into_train_val(filepath=None)
-            
-        # Save the split indices
-        split_indices = {
-            'train_indices': train_ds.indices,
-            'val_indices': val_ds.indices
-        }
+    def split_and_save(self, split_fun='spatial_clusters', create_test=True):
+        if split_fun == 'random':
+            print('WARNING: splitting randomly')
+            assert False, 'This is not implemented.'
+            train_ds, val_ds = torch.utils.data.random_split(self, [int(0.8 * len(self)), len(self) - int(0.8 * len(self))])
+            # Save the split indices
+            split_indices = {
+                'train_indices': train_ds.indices,
+                'val_indices': val_ds.indices
+            }
+        elif split_fun == 'spatial_clusters':
+            print('Splitting based on spatial clusters. This can take a little while.')
+            coords = self.df_presence.tuple_coords
+            coords = [ast.literal_eval(loc) for loc in coords]
+            coords = np.array(coords)
+            # coords_points = [shapely.geometry.Point(loc) for loc in coords]
+            if len(self.df_presence) > 2000:
+                assert False, 'You can ignore this, but be aware that this might be slow.'
+
+            ## 4000 m distance between points. Use geodist to calculate true distance.
+            clustering = DBSCAN(eps=4000, metric=lambda u, v: geodist(u, v).meters, min_samples=2).fit(coords)
+
+            ## Non-clustered points are labeled -1. Change to new cluster label.
+            clusters = copy.deepcopy(clustering.labels_)
+            new_cl = np.max(clusters) + 1
+            for i, cl in enumerate(clusters):
+                if cl == -1:
+                    clusters[i] = new_cl
+                    new_cl += 1
+
+            if create_test:
+                gss = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=0)
+                train_val_inds, test_inds = next(gss.split(np.arange(len(coords)), groups=clusters))
+                gss_2 = GroupShuffleSplit(n_splits=1, test_size=(0.15 / 0.85), random_state=0)
+                tmp_train_inds, tmp_val_inds = next(gss_2.split(train_val_inds, groups=clusters[train_val_inds]))
+                train_inds = train_val_inds[tmp_train_inds]
+                val_inds = train_val_inds[tmp_val_inds]
+                clusters_train = clusters[train_inds]
+                clusters_val = clusters[val_inds]
+                clusters_test = clusters[test_inds]
+                ## assert no overlap in indices:
+                assert len(np.intersect1d(train_inds, val_inds)) == 0, np.intersect1d(train_inds, val_inds)
+                assert len(np.intersect1d(train_inds, test_inds)) == 0, np.intersect1d(train_inds, test_inds)
+                assert len(np.intersect1d(val_inds, test_inds)) == 0, np.intersect1d(val_inds, test_inds)
+
+                ## assert no overlap in clusters:
+                assert len(np.intersect1d(clusters_train, clusters_val)) == 0, np.intersect1d(clusters_train, clusters_val)
+                assert len(np.intersect1d(clusters_train, clusters_test)) == 0, np.intersect1d(clusters_train, clusters_test)
+                assert len(np.intersect1d(clusters_val, clusters_test)) == 0, np.intersect1d(clusters_val, clusters_test)
+
+                print(f'Create {len(train_inds)} train, {len(val_inds)} val, {len(test_inds)} test indices.')
+                split_indices = {'train_indices': train_inds,
+                                'val_indices': val_inds,
+                                'test_indices': test_inds,
+                                'clusters': clusters}
+            else:
+                ## Split into train and test:
+                gss = GroupShuffleSplit(n_splits=1, test_size=0.2, random_state=0)
+                train_inds, test_inds = next(gss.split(np.arange(len(coords)), groups=clusters))
+
+                clusters_train = clusters[train_inds]
+                clusters_test = clusters[test_inds]
+                assert len(np.intersect1d(train_inds, test_inds)) == 0, np.intersect1d(train_inds, test_inds)
+                assert len(np.intersect1d(clusters_train, clusters_test)) == 0, np.intersect1d(clusters_train, clusters_test)
+
+                split_indices = {'train_indices': train_inds,
+                                  'val_indices': test_inds,
+                                  'clusters': clusters}
+                print(f'Create {len(train_inds)} train, {len(test_inds)} val indices.')
         timestamp = cdu.create_timestamp()
         torch.save(split_indices, os.path.join(path_dict_pecl['repo'], f'content/split_indices_{timestamp}.pth'))
         print(f'Saved split indices to split_indices_{timestamp}.pth')
-        return train_ds, val_ds
+        return split_indices
 
 class ImageEncoder(pl.LightningModule):
     '''
@@ -394,7 +461,7 @@ class ImageEncoder(pl.LightningModule):
     }
 
     def __init__(self, n_species=62, n_enc_channels=128, n_bands=4, 
-                 n_layers_mlp_resnet=1, n_layers_mlp_pred=1,
+                 n_layers_mlp_resnet=1, n_layers_mlp_pred=2,
                  pretrained_resnet='imagenet', freeze_resnet=True,
                  optimizer_name='Adam', resnet_version=18,
                  pecl_distance_metric='softmax',
@@ -423,7 +490,7 @@ class ImageEncoder(pl.LightningModule):
         assert self.n_layers_mlp_resnet == 1, 'Expecting 1 layer MLP for projection head for now.'
         # assert self.n_layers_mlp_resnet in [1, 2], f'Number of MLP layers {self.n_layers_mlp_resnet} not implemented.'
         self.n_layers_mlp_pred = n_layers_mlp_pred
-        assert self.n_layers_mlp_pred in [1, 2], 'Expecting 1 or 2 layer MLP for prediction head for now.'
+        assert self.n_layers_mlp_pred in [1, 2, 3], 'Expecting 1 or 2 or 3 layer MLP for prediction head for now.'
         self.pecl_distance_metric = pecl_distance_metric
         self.optimizer_name = optimizer_name
         self.use_mps = use_mps
@@ -567,6 +634,14 @@ class ImageEncoder(pl.LightningModule):
                 nn.Sigmoid())
         elif self.n_layers_mlp_pred == 2:
             self.prediction_model = nn.Sequential(
+                nn.Linear(self.n_enc_channels, self.n_enc_channels),
+                nn.ReLU(),
+                nn.Linear(self.n_enc_channels, self.n_species),
+                nn.Sigmoid())
+        elif self.n_layers_mlp_pred == 3:
+            self.prediction_model = nn.Sequential(
+                nn.Linear(self.n_enc_channels, self.n_enc_channels),
+                nn.ReLU(),
                 nn.Linear(self.n_enc_channels, self.n_enc_channels),
                 nn.ReLU(),
                 nn.Linear(self.n_enc_channels, self.n_species),
@@ -779,9 +854,39 @@ class ImageEncoder(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         with torch.no_grad():
-            loss, _, __ = self.forward_pass(batch)
-            self.log(f'test_{self.name_train_loss}_loss', loss)
-            assert False, 'Test step not implemented yet: incl accuracy/loss metrics from validation step.'
+            loss, split_loss, im_enc = self.forward_pass(batch)
+            self.log(f'test_{self.name_train_loss}_loss', loss)  # saving name loss function used so it can be recovered later
+            self.log('test_loss', loss)  # also save as test_loss for tensorboard (and lr_scheduler etc)
+
+            ## Evaluate split loss:
+            if split_loss is not None:
+                loss_pred, loss_pecl = split_loss
+                self.log(f'test_pecl-{self.pecl_distance_metric}_loss', loss_pecl)
+                ratio = loss_pred / loss_pecl
+                self.log(f'test_ratio_pred_pecl', ratio)
+
+            ## Evaluate prediction:
+            pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
+            pres_vec = batch[1]
+            assert pres_pred.shape == pres_vec.shape, f'Shape pred {pres_pred.shape}, shape labels {pres_vec.shape}'
+            distance_pred_label_means = torch.mean(torch.abs(pres_vec.mean(0) - pres_pred.mean(0)))
+            self.log(f'test_distance_pred_label_means', distance_pred_label_means)
+            for k in [1, 5, 10, 20]:
+                top_k_acc = self.top_k_accuracy(preds=pres_pred, target=pres_vec, k=k)
+                self.log(f'test_top_{k}_acc', top_k_acc)
+            mse_loss = F.mse_loss(pres_pred, pres_vec)
+            self.log(f'test_mse_loss', mse_loss)
+            mae_loss = nn.L1Loss()(pres_pred, pres_vec)
+            self.log(f'test_mae_loss', mae_loss)
+            ce_loss = nn.CrossEntropyLoss(reduction='mean')(pres_pred, pres_vec)
+            self.log(f'test_ce_loss', ce_loss)
+            bce_loss = nn.BCELoss(reduction='mean')(pres_pred, pres_vec)
+            self.log(f'test_bce_loss', bce_loss)
+            if self.class_weights is not None:
+                bce_weighted_loss = self.weighted_bce_loss(pres_pred, pres_vec)
+                self.log(f'test_weighted-bce_loss', bce_weighted_loss)
+                ce_weighted_loss = nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean')(pres_pred, pres_vec)
+                self.log(f'test_weighted-ce_loss', ce_weighted_loss)
             return loss
     
     def weighted_bce_loss(self, preds, target):
@@ -1040,6 +1145,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None,
                save_model=False, save_stats=True):
+    assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
 
@@ -1072,11 +1178,16 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                               shuffle_order_data=True, species_process=species_process,
                               augment_image=True, 
                               n_bands=n_bands, zscore_im=True, mode='train')
-    train_ds, val_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
+    train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
                           shuffle=True, persistent_workers=True) #drop_last=True, pin_memory=True
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
                         shuffle=False,  persistent_workers=True) 
+    if test_ds is not None:
+        test_dl = DataLoader(test_ds, batch_size=batch_size, num_workers=n_cpus, 
+                             shuffle=False,  persistent_workers=True)
+    else:
+        test_dl = None
 
     if model is None:
         time_created = cdu.create_timestamp(include_seconds=True)
@@ -1142,6 +1253,9 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     timestamp_end = datetime.datetime.now()
     print(f'-- Finished training at {timestamp_end}.')
 
+    if test_dl is not None:
+        trainer.test(test_dataloaders=test_dl)
+
     model.store_metrics(metrics=cb_metrics.metrics)
     if save_stats:
         model.save_stats(verbose=1)
@@ -1191,7 +1305,7 @@ class MeanRates(ImageEncoder):
 
     def evaluate_val_losses(self):
         print('Evaluating validation losses for validation dataset.')
-        val_loss_dict = {x: [] for x in ['mse', 'bce', 'top_5', 'top_10', 'top_20']}
+        val_loss_dict = {x: [] for x in ['mae', 'mse', 'bce', 'top_5', 'top_10', 'top_20']}
         all_val_labels = []
         for sample in tqdm(self.val_ds):
             all_val_labels.append(sample[1][None, :])
@@ -1201,6 +1315,8 @@ class MeanRates(ImageEncoder):
         pred_rates = self.train_mean_rates[None, :].repeat(len_batch, 1)
         assert pred_rates.shape == pres_vec.shape, (pred_rates.shape, pres_vec.shape)
 
+        mae_loss = nn.L1Loss()(pred_rates, pres_vec)
+        val_loss_dict['mae'].append(mae_loss.item())
         mse_loss = F.mse_loss(pred_rates, pres_vec)
         val_loss_dict['mse'].append(mse_loss.item())
         bce_loss = nn.BCELoss(reduction='mean')(pred_rates, pres_vec)
