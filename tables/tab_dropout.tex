@@ -1,22 +1,16 @@
 \begin{table}[h]
-\caption{Mean and standard error of the mean (SEM) of validation metrics for different dropout rates. The best performing model for each metric is highlighted in bold.}
+\caption{Mean and standard error of the mean (SEM) of validation metrics for different dropout rates of the $\mathbf{z}$ embedding layer. Performance is stated for the prediction model without contrastive regularisation. }
 \label{tab:dropout}
-\begin{tabular}{lllll}
+\begin{tabular}{llll}
 \toprule
-$\alpha$ & p_dropout & Top-10 [\%] & Top-5 [\%] & MSE [1e-02] \\
+p(dropout) & Top-10 [\%] & Top-5 [\%] & MSE [1e-02] \\
 \midrule
-0.0 & 0.0 & 70.7 $\pm$ 0.1 & 62.4 $\pm$ 0.8 & 1.21 $\pm$ 0.03 \\
-0.0 & 0.05 & 70.5 $\pm$ 0.3 & 62.1 $\pm$ 1.0 & 1.21 $\pm$ 0.03 \\
-0.0 & 0.1 & 70.5 $\pm$ 0.3 & 62.4 $\pm$ 0.8 & 1.20 $\pm$ 0.02 \\
-0.0 & 0.2 & 70.6 $\pm$ 0.2 & 62.8 $\pm$ 0.7 & 1.20 $\pm$ 0.03 \\
-0.0 & 0.3 & 70.6 $\pm$ 0.2 & 62.7 $\pm$ 0.7 & 1.19 $\pm$ 0.02 \\
-0.0 & 0.5 & 70.6 $\pm$ 0.2 & 62.6 $\pm$ 0.3 & 1.19 $\pm$ 0.02 \\
-0.1 & 0.0 & \textbf{70.9 $\pm$ 0.2} & 63.0 $\pm$ 0.6 & 1.20 $\pm$ 0.03 \\
-0.1 & 0.05 & 70.8 $\pm$ 0.1 & 62.6 $\pm$ 0.5 & 1.21 $\pm$ 0.03 \\
-0.1 & 0.1 & 70.8 $\pm$ 0.1 & 62.8 $\pm$ 0.7 & 1.20 $\pm$ 0.04 \\
-0.1 & 0.2 & 70.8 $\pm$ 0.2 & 62.6 $\pm$ 0.6 & 1.19 $\pm$ 0.02 \\
-0.1 & 0.3 & 70.8 $\pm$ 0.3 & 62.6 $\pm$ 0.7 & 1.19 $\pm$ 0.03 \\
-0.1 & 0.5 & 70.9 $\pm$ 0.1 & \textbf{63.1 $\pm$ 0.4} & \textbf{1.18 $\pm$ 0.02} \\
+0.0 & \textbf{70.7 $\pm$ 0.1} & 62.4 $\pm$ 0.8 & 1.21 $\pm$ 0.03 \\
+0.05 & 70.5 $\pm$ 0.3 & 62.1 $\pm$ 1.0 & 1.21 $\pm$ 0.03 \\
+0.1 & 70.5 $\pm$ 0.3 & 62.4 $\pm$ 0.8 & 1.20 $\pm$ 0.02 \\
+0.2 & 70.6 $\pm$ 0.2 & \textbf{62.8 $\pm$ 0.7} & 1.20 $\pm$ 0.03 \\
+0.3 & 70.6 $\pm$ 0.2 & 62.7 $\pm$ 0.7 & 1.19 $\pm$ 0.02 \\
+0.5 & 70.6 $\pm$ 0.2 & 62.6 $\pm$ 0.3 & \textbf{1.19 $\pm$ 0.02} \\
 \bottomrule
 \end{tabular}
 \end{table}

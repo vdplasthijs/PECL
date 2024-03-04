@@ -102,6 +102,36 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     ax_map.legend(['S2-BMS location'], loc='lower left', fontsize=8, bbox_to_anchor=(0, -.25))
     # ax_map.set_title('UKBMS locations')
 
+def plot_data_split_stats(path_split=os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')):
+    split_indices = torch.load(path_split)
+    train_inds = split_indices['train_indices']
+    val_inds = split_indices['val_indices']
+    test_inds = split_indices['test_indices']
+    clusters = split_indices['clusters']
+
+    clusters_train = clusters[train_inds]
+    clusters_val = clusters[val_inds]
+    clusters_test = clusters[test_inds]
+
+    assert len(np.intersect1d(train_inds, val_inds)) == 0
+    assert len(np.intersect1d(train_inds, test_inds)) == 0
+    assert len(np.intersect1d(val_inds, test_inds)) == 0
+    assert len(np.intersect1d(clusters_train, clusters_val)) == 0
+    assert len(np.intersect1d(clusters_train, clusters_test)) == 0
+    assert len(np.intersect1d(clusters_val, clusters_test)) == 0
+
+    dataset_split = np.zeros(len(clusters))
+    dataset_split[train_inds] = 1
+    dataset_split[val_inds] = 2
+    dataset_split[test_inds] = 3
+
+    print(f'Number of training samples: {len(train_inds)}, fraction: {len(train_inds) / len(clusters):.2f}')
+    print(f'Number of validation samples: {len(val_inds)}, fraction: {len(val_inds) / len(clusters):.2f}')
+    print(f'Number of test samples: {len(test_inds)},   fraction: {len(test_inds) / len(clusters):.2f}')
+    return dataset_split, clusters
+
+
+
 def dataset_fig(ds, all_labels=None, save_fig=False,
                 example_inds=[86, 190, 343, 777, 898, 1000]):
     
@@ -271,7 +301,8 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
         'lr': 'Learning rate',
         'n_enc_channels': 'Channels',
         'pecl_knn': 'KNN',
-        'pecl_knn_hard_labels': 'Hard labels'
+        'pecl_knn_hard_labels': 'Hard labels',
+        'p_dropout': 'p(dropout)',
         }
     unique_vals_ignore = ['time_created', 'n_epochs_converged']
     
@@ -410,7 +441,7 @@ def print_table_alpha():
         list_vnums=np.arange(164, 171)
     ))
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different values of the $\alpha$ ratio loss hyperparameter. ' \
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different values of the ' + r"$\alpha$" + ' ratio loss hyperparameter. ' \
               'The best performing model for each metric is highlighted in bold.'
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -419,16 +450,60 @@ def print_table_alpha():
                             label_tex='tab:alpha_ratio', caption_tex=caption)
     return (df_num_val, df_tex)
 
-def print_table_dropout(save_table=True):
-    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=np.arange(271, 307)
-    ))
+def print_table_dropout(save_table=True, include_contrastive_reg=False):
+    arr_inds = list(np.arange(271, 307))
+    if include_contrastive_reg is False:  # structure: 12 per seed. 6 for each dropout rate. first 6 are alpha=0, second 6 are alpha=0.1
+        arr_inds = arr_inds[:6] + arr_inds[12:18] + arr_inds[24:30]
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different dropout rates. ' \
-                'The best performing model for each metric is highlighted in bold.'
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=arr_inds))
+
+    if include_contrastive_reg:
+        assert False, 'change caption'
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different dropout rates of the $\mathbf{z}$ embedding layer. ' \
+              'Performance is stated for the prediction model without contrastive regularisation. ' 
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
                             metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
                             save_table=save_table, filename='tab_dropout.tex', highlight_best_row=True,
                             label_tex='tab:dropout', caption_tex=caption)
     return (df_num_val, df_tex)
+
+def print_table_results_per_species(ds, filepath_train_val_split, save_table=False,
+                                    filename='tab_species_details.tex', 
+                                    folder_save=os.path.join(path_dict_pecl['repo'], 'tables/'),
+                                    position_tex='h'):
+    
+    train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
+    assert len(train_ds) + len(val_ds) + len(test_ds) == len(ds), 'Split not correct'
+    dict_indices = {'train': train_ds.indices, 'val': val_ds.indices, 'test': test_ds.indices}
+    train_ds = train_ds.dataset
+    val_ds = val_ds.dataset
+    test_ds = test_ds.dataset
+
+    dict_table = {
+        'species ID': np.arange(len(ds.species_list)),
+        'species': [r"\textit{" + x + r"}" for x in ds.species_list]}
+
+    for name_ds, inds in dict_indices.items():
+        print(f'Number of samples in {name_ds} set: {len(inds)}')
+        df_pres = ds.df_presence.iloc[inds]
+        presence_vec = df_pres[ds.species_list].mean()
+        dict_table[f'P(presence) {name_ds} [\%]'] = [f'{x:.2f}' for x in presence_vec.values * 100]
+        # print(f'Number of species in {name_ds} set: {len(df_pres.columns)}')
+
+    df_overview = pd.DataFrame(dict_table)
+    df_overview.round(1)
+
+    caption_tex = 'Overview of the presence of species in the training, validation and test sets. '
+    label_tex = 'tab:species_details'
+
+    if save_table:
+        assert filename is not None, 'Filename not specified'
+        assert os.path.exists(folder_save), f'Folder {folder_save} does not exist'
+        assert filename.endswith('.tex'), f'Filename {filename} does not end with .tex'
+        path_save = os.path.join(folder_save, filename)
+        df_overview.to_latex(path_save, index=False, escape=False, na_rep='NaN',
+                caption=caption_tex, label=label_tex, position=position_tex)
+
+    return df_overview
