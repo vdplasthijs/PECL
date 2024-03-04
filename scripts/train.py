@@ -16,21 +16,22 @@ if __name__ == '__main__':
     species_process = ['all']
     lr = [1e-3]
     batch_size = [64]
-    pecl_knn = [1, 2, 5]
+    pecl_knn = [2]
     pecl_knn_hard_labels = [True]
     pred_train_loss = ['bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
-    fix_seed = [19, 86, 17]
-    alpha_ratio_loss = [0.01, 0.02, 0.05, 0.1, 0.2]
+    fix_seed = [17, 19, 86]
+    alpha_ratio_loss = [0, 0.1]
     freeze_resnet = [True]
+    p_dropout = [0, 0.05, 0.1, 0.2, 0.3, 0.5]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
                                   n_enc_channels, lr, batch_size, pecl_knn, 
                                   pecl_knn_hard_labels, pred_train_loss, 
                                   pretrained_resnet, fix_seed, alpha_ratio_loss,
-                                  freeze_resnet))
+                                  freeze_resnet, p_dropout))
     n_combinations = len(iterator)
     print('Combinations will be run in this order:\n---------')
     for i, args in enumerate(iterator):
@@ -38,6 +39,7 @@ if __name__ == '__main__':
     print('-------------------\n\n')
 
     i_it = 0
+    list_vnums = []
     print(f'Number of combinations: {n_combinations}')
     for args in iterator:
         i_it += 1
@@ -53,7 +55,8 @@ if __name__ == '__main__':
             'pretrained_resnet': args[8],
             'fix_seed': args[9],
             'alpha_ratio_loss': args[10],
-            'freeze_resnet': args[11]
+            'freeze_resnet': args[11],
+            'p_dropout': args[12]
         }
 
         print(f'---- {i_it}/{n_combinations} ----')
@@ -77,3 +80,9 @@ if __name__ == '__main__':
         #     continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
+        list_vnums.append(tmp_model.v_num)
+
+    print('All combinations have been run in this order:\n---------')
+    for i, args in enumerate(iterator):
+        print(f'- {list_vnums[i]}, iteration {i + 1}: {args}')
+    print('-------------------\n\n')

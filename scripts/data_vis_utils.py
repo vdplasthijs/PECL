@@ -418,3 +418,17 @@ def print_table_alpha():
                             save_table=True, filename='tab_alpha-ratio.tex', highlight_best_row=True,
                             label_tex='tab:alpha_ratio', caption_tex=caption)
     return (df_num_val, df_tex)
+
+def print_table_dropout(save_table=True):
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=np.arange(271, 307)
+    ))
+
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different dropout rates. ' \
+                'The best performing model for each metric is highlighted in bold.'
+    
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                            metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
+                            save_table=save_table, filename='tab_dropout.tex', highlight_best_row=True,
+                            label_tex='tab:dropout', caption_tex=caption)
+    return (df_num_val, df_tex)

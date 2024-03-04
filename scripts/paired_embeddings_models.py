@@ -403,7 +403,7 @@ class ImageEncoder(pl.LightningModule):
                  training_method='pecl', alpha_ratio_loss=None,
                  normalise_embedding='l2', use_mps=True,
                  use_lr_scheduler=False, seed_used=None, 
-                 batch_size_used=None,
+                 batch_size_used=None, p_dropout=0,
                  verbose=1, time_created=None):
         super(ImageEncoder, self).__init__()
         self.save_hyperparameters()
@@ -432,6 +432,10 @@ class ImageEncoder(pl.LightningModule):
         self.pecl_knn = pecl_knn
         self.pecl_knn_hard_labels = pecl_knn_hard_labels
         self.use_lr_scheduler = use_lr_scheduler
+        self.use_dropout = p_dropout > 0
+        self.p_dropout = p_dropout
+        if self.use_dropout:
+            print('Using dropout.')
         self.model_name = None
         self.v_num = None
         self.log_dir = None
@@ -606,6 +610,9 @@ class ImageEncoder(pl.LightningModule):
         else:
             assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
         
+        if self.use_dropout:
+            encoding = F.dropout(encoding, p=self.p_dropout, training=self.training)
+
         return encoding
     
     def configure_optimizers(self):
@@ -1027,7 +1034,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                normalise_embedding='l2', n_bands=4,
                training_method='pecl', lr=1e-3, batch_size=64, n_epochs_max=20, 
                image_folder=None, presence_csv=None,  # None will use default paths 
-               species_process='all',
+               species_process='all', p_dropout=0,
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
@@ -1086,6 +1093,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                             use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
                             alpha_ratio_loss=alpha_ratio_loss,
+                            p_dropout=p_dropout,
                             time_created=time_created, batch_size_used=batch_size,
                             verbose=verbose, seed_used=fix_seed)
     else:
