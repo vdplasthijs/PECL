@@ -9,23 +9,23 @@ path_dict_pecl = loadpaths_pecl.loadpaths()
 if __name__ == '__main__':
     ## Settings:
     bool_save_full_model = True
-    bool_stop_early = True
+    bool_stop_early = False
 
     ## Hyperparameters to search over:
-    training_method = ['pred']
+    training_method = ['pred_and_pecl']
     species_process = ['all']
-    lr = [1e-3, 5e-4]
-    batch_size = [64] 
-    pecl_knn = [2]
-    pecl_knn_hard_labels = [True]
+    lr = [1e-3]
+    batch_size = [32, 64] 
+    pecl_knn = [1, 2, 5]
+    pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
-    pretrained_resnet = ['imagenet', 'seco']
+    pretrained_resnet = ['seco']
     n_enc_channels = [256] 
     fix_seed = [42, 17, 86]
-    alpha_ratio_loss = [0]
+    alpha_ratio_loss = [0.1, 0.3]
     freeze_resnet = [True]
     p_dropout = [0]
-    n_layers_mlp_pred = [1, 2, 3]
+    n_layers_mlp_pred = [3]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
@@ -77,7 +77,7 @@ if __name__ == '__main__':
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
 
-        # if i_it == 0:
+        # if i_it <= 4:
         #     continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
