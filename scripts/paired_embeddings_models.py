@@ -966,7 +966,14 @@ class ImageEncoder(pl.LightningModule):
         return 
     
     def store_test_metrics(self, metrics):
-        self.test_metrics = metrics
+        metrics_float = {}
+        assert len(metrics) == 1, f'Expected 1 dict, but got {len(metrics)}'
+        for k, v in metrics[0].items():
+            if type(v) == torch.Tensor:
+                metrics_float[k] = v.detach().cpu().numpy()
+            else:
+                metrics_float[k] = v
+        self.test_metrics = pd.DataFrame(metrics_float, index=[0])
 
     def save_stats(self, folder='/Users/t.vanderplas/models/PECL/stats/',
                    verbose=1):

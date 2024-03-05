@@ -263,24 +263,32 @@ def load_list_timestamps(list_ts):
         dict_stats[ts] = tmp_stats
     return dict_stats
 
-def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
+def create_df_list_timestamps(list_ts, split_use='test'):
     dict_stats = load_list_timestamps(list_ts)
     example_stats = dict_stats[list_ts[0]]
     hparams_exclude = ['class_weights']
     hparams_use = [h for h in  example_stats['hparams'].keys() if h not in hparams_exclude]
 
-    metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
-    metrics_use_min = ['val_bce_loss', 'val_mse_loss']
-
-    metrics_use = metrics_use_max + metrics_use_min
-    assert metric_optimise in metrics_use, f'Optimisation metric {metric_optimise} not in metrics_use'
+    if split_use == 'val':
+        metric_optimise='val_top_10_acc'
+        metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
+        metrics_use_min = ['val_bce_loss', 'val_mse_loss']
+        metrics_use = metrics_use_max + metrics_use_min
+        assert metric_optimise in metrics_use, f'Optimisation metric {metric_optimise} not in metrics_use'
+        col_df_use = 'df_metrics'
+    elif split_use == 'test':
+        metric_optimise = None
+        metrics_use_max = ['test_top_20_acc', 'test_top_10_acc', 'test_top_5_acc', 'test_top_1_acc']
+        metrics_use_min = ['test_bce_loss', 'test_mse_loss', 'test_mae_loss']
+        metrics_use = metrics_use_max + metrics_use_min
+        col_df_use = 'test_metrics'
 
     df = pd.DataFrame(columns=['timestamp'] + hparams_use + metrics_use)
     for i_ts, ts in enumerate(list_ts):
         tmp_stats = dict_stats[ts]
         tmp_hparams = tmp_stats['hparams']
-        tmp_df_metrics = tmp_stats['df_metrics']
-        print(tmp_stats['df_metrics'].columns)
+        tmp_df_metrics = tmp_stats[col_df_use]
+        # print(tmp_stats[col_df_use].columns)
 
         if i_ts == 0:
             hparams_previous = tmp_hparams.keys()
@@ -289,11 +297,15 @@ def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
             assert hparams_previous == tmp_hparams.keys(), 'Hyperparameters not consistent'
             assert np.all(metrics_previous == tmp_df_metrics.columns), 'Metrics not consistent'
 
-        if metric_optimise in metrics_use_max:
-            ind_epoch_best = tmp_df_metrics[metric_optimise].idxmax()
-        else:
-            ind_epoch_best = tmp_df_metrics[metric_optimise].idxmin()
-
+        if split_use == 'val':
+            if metric_optimise in metrics_use_max:
+                ind_epoch_best = tmp_df_metrics[metric_optimise].idxmax()
+            else:
+                ind_epoch_best = tmp_df_metrics[metric_optimise].idxmin()
+        elif split_use == 'test':
+            ind_epoch_best = tmp_df_metrics.index[-1]
+            assert ind_epoch_best == 0, f'Expected last epoch, got {ind_epoch_best}'
+            
         tmp_metrics = tmp_df_metrics.loc[ind_epoch_best]
         for h in hparams_use:
             assert h in tmp_hparams.keys(), f'Hyperparameter {h} not in tmp_hparams'
@@ -304,20 +316,31 @@ def create_df_list_timestamps(list_ts, metric_optimise='val_top_10_acc'):
 
     return df, ('timestamp', hparams_use, metrics_use, metric_optimise)
 
-def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_top_10_acc',
-                           hparam_show=[], metrics_show=['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss'],
+def create_printable_table(df, hparams_use, metrics_use, split_use='test', 
+                           hparam_show=[], 
                            col_seed='seed_used', save_table=False, filename=None,
                            folder_save=os.path.join(path_dict_pecl['repo'], 'tables/'),
                            caption_tex=None, label_tex=None, position_tex='h',
                            highlight_best_row=False):
-    
-    dict_rename_metrics = {'val_top_20_acc': 'Top-20',
-                    'val_top_10_acc': 'Top-10',
-                    'val_top_5_acc': 'Top-5',
-                    'val_top_1_acc': 'Top-1',
-                    'val_bce_loss': 'BCE',
-                    'val_mse_loss': 'MSE',
-                    'val_pecl-softmax_loss': 'PECL'}
+    if split_use == 'val':
+        metrics_show=['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss']
+        dict_rename_metrics = {'val_top_20_acc': 'Top-20',
+                        'val_top_10_acc': 'Top-10',
+                        'val_top_5_acc': 'Top-5',
+                        'val_top_1_acc': 'Top-1',
+                        'val_bce_loss': 'BCE',
+                        'val_mse_loss': 'MSE',
+                        'val_pecl-softmax_loss': 'PECL'}
+    elif split_use == 'test':
+        metrics_show=['test_top_10_acc', 'test_top_5_acc', 'test_mse_loss']
+        dict_rename_metrics = {'test_top_20_acc': 'Top-20',
+                        'test_top_10_acc': 'Top-10',
+                        'test_top_5_acc': 'Top-5',
+                        'test_top_1_acc': 'Top-1',
+                        'test_bce_loss': 'BCE',
+                        'test_mse_loss': 'MSE',
+                        'test_mae_loss': 'MAE',
+                        'test_pecl-softmax_loss': 'PECL'}
     dict_rename_hparams = {
         'species_process': 'Species',
         'alpha_ratio_loss': r"$\alpha$",
@@ -350,6 +373,7 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
             print(f'Hyperparameter {h} has {n_unique} unique values')
     df_num_val = df_num_val.drop(columns=cols_drop)
     # print(cols_vals_all_same)
+    # print(df_num_val)
     if col_seed in cols_multiple_values:
         cols_multiple_values.remove(col_seed)
         multiple_seeds = True
@@ -366,7 +390,8 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
     for m in metrics_use:
         if m not in metrics_show:
             df_num_val = df_num_val.drop(columns=[m])
-
+            print(f'Dropping metric {m}')
+    print(df_num_val)
     df_num_val = df_num_val.rename(columns=dict_rename_metrics)
     df_num_val = df_num_val.drop(columns=['timestamp'])
 
@@ -375,6 +400,7 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
         assert col_seed in df_num_val.columns
         assert df_num_val[col_seed].nunique() > 1
         df_num_val = df_num_val.drop(columns=[col_seed])
+    # print(df_num_val)
     df_num_val = df_num_val.groupby(hparam_show).agg(['mean', 'sem'])  # mean and sem across seeds. With only one seed, sem is NaN
 
     ## Find all columns that arent hparams & rewrite to mean pm sem
@@ -417,8 +443,12 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
     df_num_val = df_num_val.reset_index()
 
     if highlight_best_row:
-        metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
-        metrics_use_min = ['val_bce_loss', 'val_mse_loss', 'val_pecl-softmax_loss']
+        if split_use == 'val':
+            metrics_use_max = ['val_top_20_acc', 'val_top_10_acc', 'val_top_5_acc', 'val_top_1_acc']
+            metrics_use_min = ['val_bce_loss', 'val_mse_loss', 'val_pecl-softmax_loss']
+        elif split_use == 'test':
+            metrics_use_max = ['test_top_20_acc', 'test_top_10_acc', 'test_top_5_acc', 'test_top_1_acc']
+            metrics_use_min = ['test_bce_loss', 'test_mse_loss', 'test_mae_loss', 'test_pecl-softmax_loss']
         metrics_use_max = [dict_rename_metrics[m] for m in metrics_use_max]
         metrics_use_min = [dict_rename_metrics[m] for m in metrics_use_min]
         for m in metrics_use_max + metrics_use_min:
@@ -446,43 +476,41 @@ def create_printable_table(df, hparams_use, metrics_use, metric_optimise='val_to
 
     return df_num_val, df_tex
 
-def print_table_batchsize():
+def print_table_batchsize(split_use='test'):
 
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=np.arange(199, 217)
-    ))
+        list_vnums=np.arange(199, 217)), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different batch sizes. ' \
               'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                           metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
                            save_table=True, filename='tab_batch-size.tex', highlight_best_row=True,
+                           split_use=split_use,
                            label_tex='tab:batch_size', caption_tex=caption)
     
     return (df_num_val, df_tex)
 
-def print_table_alpha():
+def print_table_alpha(split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=np.arange(164, 171)
-    ))
+        list_vnums=np.arange(164, 171)), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different values of the ' + r"$\alpha$" + ' ratio loss hyperparameter. ' \
               'The best performing model for each metric is highlighted in bold.'
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                            metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
                             save_table=True, filename='tab_alpha-ratio.tex', highlight_best_row=True,
+                           split_use=split_use,
                             label_tex='tab:alpha_ratio', caption_tex=caption)
     return (df_num_val, df_tex)
 
-def print_table_dropout(save_table=True, include_contrastive_reg=False):
+def print_table_dropout(save_table=True, include_contrastive_reg=False, split_use='test'):
     arr_inds = list(np.arange(271, 307))
     if include_contrastive_reg is False:  # structure: 12 per seed. 6 for each dropout rate. first 6 are alpha=0, second 6 are alpha=0.1
         arr_inds = arr_inds[:6] + arr_inds[12:18] + arr_inds[24:30]
 
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=arr_inds))
+        list_vnums=arr_inds), split_use=split_use)
 
     if include_contrastive_reg:
         assert False, 'change caption'
@@ -490,9 +518,35 @@ def print_table_dropout(save_table=True, include_contrastive_reg=False):
               'Performance is stated for the prediction model without contrastive regularisation. ' 
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                            metric_optimise=tmp_details[3], # hparam_show='alpha_ratio_loss',
                             save_table=save_table, filename='tab_dropout.tex', highlight_best_row=True,
+                           split_use=split_use,
                             label_tex='tab:dropout', caption_tex=caption)
+    return (df_num_val, df_tex)
+
+def print_table_mlplayers_pretrained(save_table=True, split_use='test'):
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=np.arange(324, 342)), split_use='test')
+
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks and varying number of MLP prediction layers.  ' \
+            'The best performing model for each metric is highlighted in bold.'
+
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                                                    split_use='test', save_table=save_table, 
+                                                    filename='tab_mlp-layer_pretrained.tex', highlight_best_row=True,
+                                                label_tex='tab:mlp-layer_pretrained', caption_tex=caption)
+    return (df_num_val, df_tex)
+
+def print_table_mlplayers_pretrained_lr(save_table=True, split_use='test'):
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=np.arange(324, 360)), split_use='test')
+
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
+            'The best performing model for each metric is highlighted in bold.'
+
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                                                    split_use='test', save_table=save_table, 
+                                                    filename='tab_mlp-layer_pretrained_lr.tex', highlight_best_row=True,
+                                                label_tex='tab:mlp-layer_pretrained_lr', caption_tex=caption)
     return (df_num_val, df_tex)
 
 def print_table_results_per_species(ds, filepath_train_val_split, save_table=False,

@@ -14,8 +14,8 @@ if __name__ == '__main__':
     ## Hyperparameters to search over:
     training_method = ['pred']
     species_process = ['all']
-    lr = [1e-3, 3e-4]
-    batch_size = [64], 
+    lr = [1e-3, 5e-4]
+    batch_size = [64] 
     pecl_knn = [2]
     pecl_knn_hard_labels = [True]
     pred_train_loss = ['bce']
