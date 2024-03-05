@@ -737,9 +737,10 @@ class ImageEncoder(pl.LightningModule):
                 flatten_dist = True
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
-                                                                knn_hard_labels=self.pecl_knn_hard_labels)
+                                                                knn_hard_labels=self.pecl_knn_hard_labels,
+                                                                soft_weights_squared=True,  # only matters if hard labels is False
+                                                                inner_prod_only=True)
                                                                 
-            # return dist_array_ims, dist_array_pres
             inds_one = torch.where(dist_array_pres > 0)
             dist_array_ims = dist_array_ims[inds_one]
             dist_array_pres = dist_array_pres[inds_one]
@@ -786,11 +787,14 @@ class ImageEncoder(pl.LightningModule):
         else:
             assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
 
-        loss_pecl, im_enc = self.pecl_loss(im_enc, pres_vec_pecl)
         pres_pred = self.prediction_model(im_enc)
         loss_pred = self.pred_loss(pres_pred, pres_vec)
-
-        loss = loss_pred + self.alpha_ratio_loss * loss_pecl
+        if self.alpha_ratio_loss > 0:
+            loss_pecl, im_enc = self.pecl_loss(im_enc, pres_vec_pecl)
+            loss = loss_pred + self.alpha_ratio_loss * loss_pecl
+        else:
+            loss = loss_pred
+            loss_pecl = 0
         return loss, (loss_pred, self.alpha_ratio_loss * loss_pecl), im_enc
 
     def pred_loss(self, pres_pred, pres_vec):
@@ -1082,6 +1086,7 @@ def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename=None, t
 
 def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_denominator=True,
                                       flatten=True, knn=None, knn_hard_labels=False,
+                                      soft_weights_squared=True, suppress_knn_size_warning=True,
                                       similarity_function='inner', inner_prod_only=False):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
     assert temperature > 0, f'Temperature {temperature} should be > 0.'
@@ -1110,8 +1115,9 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
         assert flatten is False, 'Flatten should be False if KNN is used.'
         assert type(knn) == int, f'Expected int for knn, but got {type(knn)}'
         assert knn > 0, f'Expected knn > 0, but got {knn}'
-        if knn < samples.shape[0] - 1:
-            print(f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}. This can happen if final batch of data loader happens to be very small. Ignoring PECL here.')
+        if knn >= samples.shape[0] - 1:
+            if suppress_knn_size_warning is False:
+                print(f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}. This can happen if final batch of data loader happens to be very small. Ignoring PECL here.')
             return torch.zeros_like(inner_prod_mat)
         inner_prod_mat = inner_prod_mat - torch.diag(inner_prod_mat.diag())  # set diagonal to 0 so it doesn't get picked with KNN
         knn_inner_prod_mat = torch.zeros_like(inner_prod_mat)
@@ -1120,7 +1126,10 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
             knn_inner_prod_mat.scatter_(1, inds_positive, 1)
         else:
             for row, cols in enumerate(inds_positive):
-                knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols]
+                if soft_weights_squared:
+                    knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols] ** 2
+                else:
+                    knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols]
         return knn_inner_prod_mat
     if flatten:  # only return upper triangular part because of symmetry
         inds_upper_triu = torch.triu_indices(inner_prod_mat.shape[0], inner_prod_mat.shape[1], offset=1)
