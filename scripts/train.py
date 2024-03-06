@@ -9,21 +9,21 @@ path_dict_pecl = loadpaths_pecl.loadpaths()
 if __name__ == '__main__':
     ## Settings:
     bool_save_full_model = True
-    bool_stop_early = False
+    bool_stop_early = True
 
     ## Hyperparameters to search over:
     training_method = ['pred_and_pecl']
     species_process = ['all']
-    lr = [1e-3]
-    batch_size = [32, 64] 
-    pecl_knn = [1, 2, 5]
+    lr = [1e-3, 1e-4]
+    batch_size = [64] 
+    pecl_knn = [1]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
     fix_seed = [42, 17, 86]
-    alpha_ratio_loss = [0.1, 0.3]
-    freeze_resnet = [True]
+    alpha_ratio_loss = [0]
+    freeze_resnet = [False]
     p_dropout = [0]
     n_layers_mlp_pred = [3]
 
@@ -77,8 +77,8 @@ if __name__ == '__main__':
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
 
-        if i_it <= 15:
-            continue
+        # if i_it <= 15:
+        #     continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
         list_vnums.append(tmp_model.v_num)

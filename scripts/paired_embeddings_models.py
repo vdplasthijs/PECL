@@ -471,6 +471,7 @@ class ImageEncoder(pl.LightningModule):
                  normalise_embedding='l2', use_mps=True,
                  use_lr_scheduler=False, seed_used=None, 
                  batch_size_used=None, p_dropout=0,
+                 temperature=0.5,
                  verbose=1, time_created=None):
         super(ImageEncoder, self).__init__()
         self.save_hyperparameters()
@@ -501,6 +502,7 @@ class ImageEncoder(pl.LightningModule):
         self.use_lr_scheduler = use_lr_scheduler
         self.use_dropout = p_dropout > 0
         self.p_dropout = p_dropout
+        self.temperature = temperature
         if self.use_dropout:
             print('Using dropout.')
         self.model_name = None
@@ -735,9 +737,10 @@ class ImageEncoder(pl.LightningModule):
                 flatten_dist = False
             else:
                 flatten_dist = True
-            dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist)
+            dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist, temperature=self.temperature)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels,
+                                                                temperature=self.temperature,
                                                                 soft_weights_squared=True,  # only matters if hard labels is False
                                                                 inner_prod_only=True)
                                                                 
@@ -1162,11 +1165,12 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                normalise_embedding='l2', n_bands=4,
                training_method='pecl', lr=1e-3, batch_size=64, n_epochs_max=20, 
                image_folder=None, presence_csv=None,  # None will use default paths 
-               species_process='all', p_dropout=0,
+               species_process='all', p_dropout=0, temperature=0.5,
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None,
+               tb_log_folder='/Users/t.vanderplas/models/PECL',
                save_model=False, save_stats=True):
     # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
     if filepath_train_val_split is None:
@@ -1184,14 +1188,14 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     if use_mps:
         assert torch.backends.mps.is_available()
         assert torch.backends.mps.is_built()
-        tb_logger = pl_loggers.TensorBoardLogger(save_dir='/Users/t.vanderplas/models/PECL')
+        tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
         n_cpus = 8
         acc_use = 'gpu'
         # acc_use = 'cpu'
         folder_save = '/Users/t.vanderplas/models/PECL/'
     else:
         assert torch.cuda.is_available(), 'No GPU available.'
-        tb_logger = pl_loggers.TensorBoardLogger(save_dir='/home/tplas/models/')
+        tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
         n_cpus = 8
         acc_use = 'gpu'
         folder_save = '/home/tplas/models/PECL/'
@@ -1232,7 +1236,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                             use_lr_scheduler=use_lr_scheduler,
                             training_method=training_method,
                             alpha_ratio_loss=alpha_ratio_loss,
-                            p_dropout=p_dropout,
+                            p_dropout=p_dropout, temperature=temperature,
                             time_created=time_created, batch_size_used=batch_size,
                             verbose=verbose, seed_used=fix_seed)
     else:
