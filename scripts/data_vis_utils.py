@@ -370,7 +370,8 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
                            col_seed='seed_used', save_table=False, filename=None,
                            folder_save=os.path.join(path_dict_pecl['repo'], 'tables/'),
                            caption_tex=None, label_tex=None, position_tex='h',
-                           highlight_best_row=False, drop_columns_tex=[]):
+                           highlight_best_row=False, drop_columns_tex=[],
+                           sort_by_col=None, sort_ascending=True):
     if split_use == 'val':
         metrics_show = ['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss']
         dict_rename_metrics = {'val_top_20_acc': 'Top-20',
@@ -561,6 +562,10 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
     if len(drop_columns_tex) > 0:
         df_tex = df_tex.drop(columns=drop_columns_tex)
 
+    if sort_by_col is not None:
+        df_tex = df_tex.sort_values(by=dict_rename_hparams[sort_by_col], ascending=sort_ascending).reset_index(drop=True)
+        df_num_val = df_num_val.sort_values(by=sort_by_col, ascending=sort_ascending).reset_index(drop=True)
+
     if save_table:
         assert filename is not None, 'Filename not specified'
         assert os.path.exists(folder_save), f'Folder {folder_save} does not exist'
@@ -571,14 +576,19 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
 
     return df_num_val, df_tex
 
-def plot_val_timeseries(list_ts, ax=None, metric_show='val_top_10_acc', n_epochs_expected=51):
+def plot_val_timeseries(list_ts, ax=None, metric_show='val_top_10_acc', n_epochs_expected=51,
+                        hue_hparam=None):
     df_hparams_unique, df_hparams_ident, dict_metrics = create_df_val_timeseries(list_ts)
     
     cols_drop = ['time_created', 'timestamp', 'seed_used']
     df_hparams_unique = df_hparams_unique.drop(columns=cols_drop)
     cols_hparams_unique = list(df_hparams_unique.columns)
-    assert len(cols_hparams_unique) == 1, f'Expected 1 column, got {len(cols_hparams_unique)}'
-    cols_hparams_unique = cols_hparams_unique[0]
+    if hue_hparam is None:
+        assert len(cols_hparams_unique) == 1, f'Expected 1 column, got {len(cols_hparams_unique)}: {cols_hparams_unique}'
+        hue_hparam = cols_hparams_unique[0]
+    else:
+        assert hue_hparam in cols_hparams_unique, f'Hue hyperparameter {hue_hparam} not in cols_hparams_unique'
+        cols_hparams_unique = [hue_hparam]
     cols_metrics = dict_metrics[list(dict_metrics.keys())[0]].columns
     assert metric_show in cols_metrics, f'Metric {metric_show} not in dict_metrics'
 
@@ -592,7 +602,7 @@ def plot_val_timeseries(list_ts, ax=None, metric_show='val_top_10_acc', n_epochs
         assert (cols_metrics == df_metrics.columns).all(), 'Metrics not consistent' 
         start_ind = i * n_epochs_expected
         end_ind = (i + 1) * n_epochs_expected
-        for c in df_hparams_unique.columns:
+        for c in cols_hparams_unique:
             dict_data[c][start_ind:end_ind] = df_hparams_unique[c].iloc[i]
         for c in cols_metrics:
             dict_data[c][start_ind:end_ind] = df_metrics[c].values
@@ -604,8 +614,18 @@ def plot_val_timeseries(list_ts, ax=None, metric_show='val_top_10_acc', n_epochs
         fig, ax = plt.subplots(1, 1, figsize=(6, 4))
 
     sns.lineplot(data=df_plot, x='epoch', y=metric_show, ax=ax, errorbar=('ci', 95),
-                 hue=cols_hparams_unique, palette='tab10')
+                 hue=hue_hparam, palette='tab10')
     
+    loss_mean_rates = get_mean_rates_results(use_precomputed=True)
+    metric_show_mr = metric_show.lstrip('val_').rstrip('_acc')
+    assert metric_show_mr in loss_mean_rates.keys(), f'Metric {metric_show_mr} not in loss_mean_rates {loss_mean_rates.keys()}'
+    curr_loss_mr = loss_mean_rates[metric_show_mr][0]
+    print(f'Mean rates {metric_show_mr}: {curr_loss_mr}')
+    ax.axhline(curr_loss_mr, color='k', linestyle='--', label='Mean rates')
+    
+    ylims = ax.get_ylim()
+    ax.set_ylim([curr_loss_mr * 0.98, ylims[1]])
+
     return df_plot
 
 
@@ -657,8 +677,9 @@ def print_table_dropout(save_table=True, include_contrastive_reg=False, split_us
     return (df_num_val, df_tex)
 
 def print_table_mlplayers_pretrained(save_table=True, split_use='test'):
+    list_vnums = list(np.arange(324, 342))
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=np.arange(324, 342)), split_use='test')
+        list_vnums=list_vnums), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks and varying number of MLP prediction layers. ' \
             'The best performing model for each metric is highlighted in bold.'
@@ -671,27 +692,46 @@ def print_table_mlplayers_pretrained(save_table=True, split_use='test'):
 
 def print_table_mlplayers_pretrained_lr(save_table=True, split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=np.arange(324, 360)), split_use='test')
+        list_vnums=np.arange(324, 360)), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                                                    split_use='test', save_table=save_table, 
+                                                    split_use=split_use, save_table=save_table, 
                                                     filename='tab_mlp-layer_pretrained_lr.tex', highlight_best_row=True,
                                                 label_tex='tab:mlp-layer_pretrained_lr', caption_tex=caption)
+    return (df_num_val, df_tex)
+
+def print_table_model_changes(save_table=True, split_use='test'):
+    list_vnums = list(np.arange(405, 411))  # 6 runs freeze=False [diff LR]
+    list_vnums = list_vnums + [335, 338, 341] # 3 runs freeze=True, seco 3 layer 
+    list_vnums = list_vnums + [399, 401, 403]        ## add 3 runs with best alpha>0
+
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=list_vnums), split_use=split_use)
+    
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different model changes. ' \
+                'The best performing model for each metric is highlighted in bold.'
+    
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                                                split_use=split_use, save_table=save_table, add_mean_rates=True,
+                                                filename='tab_model_changes.tex', highlight_best_row=True,
+                                                label_tex='tab:model_changes', caption_tex=caption,
+                                                drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss'])
+    
     return (df_num_val, df_tex)
 
 def print_table_cr(save_table=False, split_use='test'):
     list_vnums = list(np.arange(361, 373)) + [335, 338, 341]# + list(np.arange(367, 374))
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=list_vnums), split_use='test')
+        list_vnums=list_vnums), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                                                    split_use='test', save_table=save_table, 
+                                                    split_use=split_use, save_table=save_table, 
                                                     filename='tab_mlp-layer_pretrained_lr.tex', highlight_best_row=True,
                                                 label_tex='tab:mlp-layer_pretrained_lr', caption_tex=caption)
     return (df_num_val, df_tex)
@@ -701,34 +741,36 @@ def print_table_cr_32(save_table=False, split_use='test'):
     list_vnums.remove(389)  # broken run
     list_vnums = list_vnums + [335, 338, 341]  # alpha=0 runs
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=list_vnums), split_use='test')
+        list_vnums=list_vnums), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks with and without contrastive regularisation, '\
               'for various hyperparameter settings.'
      
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                                                    split_use='test', save_table=save_table, 
+                                                    split_use=split_use, save_table=save_table, 
                                                     filename='tab_cr_32.tex', highlight_best_row=True,
                                                 label_tex='tab:cr_32', caption_tex=caption,
+                                                sort_by_col='alpha_ratio_loss',
                                                 drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss'])
     return (df_num_val, df_tex)
 
-def print_table_test(save_table=False, split_use='test'):
-    # list_vnums = list(np.arange(361, 373)) + [335, 338, 341]# + list(np.arange(367, 374))
-    # list_vnums = np.arange(380, 386)
-    # list_vnums = np.concatenate((np.arange(361, 373), np.arange(380, 386), [335, 338, 341]))
+def print_table_test(save_table=False, split_use='test', list_vnums=None):
+    if list_vnums is None:
+        # list_vnums = list(np.arange(361, 373)) + [335, 338, 341]# + list(np.arange(367, 374))
+        # list_vnums = np.arange(380, 386)
+        # list_vnums = np.concatenate((np.arange(361, 373), np.arange(380, 386), [335, 338, 341]))
 
-    list_vnums = list(np.arange(386, 405))
-    list_vnums.remove(389)
-    list_vnums = list_vnums + [335, 338, 341]
+        list_vnums = list(np.arange(386, 405))
+        list_vnums.remove(389)
+        list_vnums = list_vnums + [335, 338, 341]
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=list_vnums), split_use='test')
+        list_vnums=list_vnums), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
-                                                    split_use='test', save_table=save_table, 
+                                                    split_use=split_use, save_table=save_table, 
                                                     filename='tab_mlp-layer_pretrained_lr.tex', highlight_best_row=True,
                                                 label_tex='tab:mlp-layer_pretrained_lr', caption_tex=caption)
     return (df_num_val, df_tex)
