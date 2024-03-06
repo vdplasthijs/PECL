@@ -370,7 +370,7 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
                            col_seed='seed_used', save_table=False, filename=None,
                            folder_save=os.path.join(path_dict_pecl['repo'], 'tables/'),
                            caption_tex=None, label_tex=None, position_tex='h',
-                           highlight_best_row=False):
+                           highlight_best_row=False, drop_columns_tex=[]):
     if split_use == 'val':
         metrics_show = ['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss']
         dict_rename_metrics = {'val_top_20_acc': 'Top-20',
@@ -398,7 +398,7 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
         'freeze_resnet': 'Freeze Res',
         'lr': 'LR',
         'n_enc_channels': 'Channels',
-        'pecl_knn': 'KNN',
+        'pecl_knn': '$k$',
         'pecl_knn_hard_labels': 'Hard labels',
         'p_dropout': 'p(dropout)',
         'n_layers_mlp_pred': 'MLP',
@@ -558,6 +558,9 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
             elements_rename_dict = {'imagenet': 'ImageNet', 'None': 'Random', 'seco': 'SeCo', np.nan: 'Mean rate'}
             df_tex[c] = df_tex[c].apply(lambda x: elements_rename_dict[x])
 
+    if len(drop_columns_tex) > 0:
+        df_tex = df_tex.drop(columns=drop_columns_tex)
+
     if save_table:
         assert filename is not None, 'Filename not specified'
         assert os.path.exists(folder_save), f'Folder {folder_save} does not exist'
@@ -693,10 +696,31 @@ def print_table_cr(save_table=False, split_use='test'):
                                                 label_tex='tab:mlp-layer_pretrained_lr', caption_tex=caption)
     return (df_num_val, df_tex)
 
+def print_table_cr_32(save_table=False, split_use='test'):
+    list_vnums = list(np.arange(386, 405))
+    list_vnums.remove(389)  # broken run
+    list_vnums = list_vnums + [335, 338, 341]  # alpha=0 runs
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=list_vnums), split_use='test')
+
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks with and without contrastive regularisation, '\
+              'for various hyperparameter settings.'
+     
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                                                    split_use='test', save_table=save_table, 
+                                                    filename='tab_cr_32.tex', highlight_best_row=True,
+                                                label_tex='tab:cr_32', caption_tex=caption,
+                                                drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss'])
+    return (df_num_val, df_tex)
+
 def print_table_test(save_table=False, split_use='test'):
     # list_vnums = list(np.arange(361, 373)) + [335, 338, 341]# + list(np.arange(367, 374))
-    list_vnums = np.arange(380, 386)
+    # list_vnums = np.arange(380, 386)
     # list_vnums = np.concatenate((np.arange(361, 373), np.arange(380, 386), [335, 338, 341]))
+
+    list_vnums = list(np.arange(386, 405))
+    list_vnums.remove(389)
+    list_vnums = list_vnums + [335, 338, 341]
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums), split_use='test')
 
