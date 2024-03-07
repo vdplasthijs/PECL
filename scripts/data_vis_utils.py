@@ -250,22 +250,22 @@ def get_list_timestamps_from_vnums(list_vnums, path_stats='/Users/t.vanderplas/m
     contents_folder = [x for x in contents_folder if x.endswith('.pkl')]
     for vnum in list_vnums:
         assert type(vnum) in [int, np.int64], f'Expected int, got {type(vnum)}'
-        list_candidates = [x for x in contents_folder if f'vnum-{vnum}' in x]
-        assert len(list_candidates) == 1, f'Expected 1 candidate, got {len(list_candidates)}'
+        list_candidates = [x for x in contents_folder if f'vnum-{vnum}_' in x]
+        assert len(list_candidates) == 1, f'Expected 1 candidate, got {len(list_candidates)} for vnum {vnum} in {path_stats}: {list_candidates}'
         list_timestamps.append(list_candidates[0])
     assert len(list_timestamps) == len(list_vnums), f'Expected {len(list_vnums)} timestamps, got {len(list_timestamps)}'
     return list_timestamps
 
-def load_list_timestamps(list_ts):
+def load_list_timestamps(list_ts, folder=None):
     assert type(list_ts) == list, f'Expected list, got {type(list_ts)}'
     dict_stats = {}
     for ts in list_ts:
-        tmp_stats = pem.load_stats(timestamp=ts)
+        tmp_stats = pem.load_stats(timestamp=ts, folder=folder)
         dict_stats[ts] = tmp_stats
     return dict_stats
 
-def create_df_list_timestamps(list_ts, split_use='test'):
-    dict_stats = load_list_timestamps(list_ts)
+def create_df_list_timestamps(list_ts, split_use='test', folder=None):
+    dict_stats = load_list_timestamps(list_ts, folder=folder)
     example_stats = dict_stats[list_ts[0]]
     hparams_exclude = ['class_weights']
     hparams_use = [h for h in  example_stats['hparams'].keys() if h not in hparams_exclude]
@@ -563,8 +563,19 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
         df_tex = df_tex.drop(columns=drop_columns_tex)
 
     if sort_by_col is not None:
-        df_tex = df_tex.sort_values(by=dict_rename_hparams[sort_by_col], ascending=sort_ascending).reset_index(drop=True)
-        df_num_val = df_num_val.sort_values(by=sort_by_col, ascending=sort_ascending).reset_index(drop=True)
+        if sort_by_col in dict_rename_hparams.keys():
+            sort_by_col_tex = dict_rename_hparams[sort_by_col]
+            df_tex = df_tex.sort_values(by=sort_by_col_tex, ascending=sort_ascending).reset_index(drop=True)
+            df_num_val = df_num_val.sort_values(by=sort_by_col, ascending=sort_ascending).reset_index(drop=True)
+        else:
+            assert sort_by_col in df_num_val.columns, f'Column {sort_by_col} not in df_tex.columns'
+            df_tex = df_tex.reset_index(drop=True)
+            df_num_val = df_num_val.reset_index(drop=True)
+            inds_rows_sorted = np.argsort(df_num_val[sort_by_col]['mean'].values)
+            df_tex = df_tex.loc[inds_rows_sorted]
+            df_tex = df_tex.reset_index(drop=True)
+            df_num_val = df_num_val.loc[inds_rows_sorted]
+            df_num_val = df_num_val.reset_index(drop=True)
 
     if save_table:
         assert filename is not None, 'Filename not specified'
@@ -744,7 +755,7 @@ def print_table_cr_32(save_table=False, split_use='test'):
         list_vnums=list_vnums), split_use=split_use)
 
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks with and without contrastive regularisation, '\
-              'for various hyperparameter settings.'
+              'for various hyperparameter settings. Temperature $\tau = 0.5$ was used.'
      
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
                                                     split_use=split_use, save_table=save_table, 
@@ -752,6 +763,28 @@ def print_table_cr_32(save_table=False, split_use='test'):
                                                 label_tex='tab:cr_32', caption_tex=caption,
                                                 sort_by_col='alpha_ratio_loss',
                                                 drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss'])
+    return (df_num_val, df_tex)
+
+
+def print_table_randomsearch(save_table=False, split_use='test', folder='/Users/t.vanderplas/models/PECL/random_search/stats/'):
+    contents_folder = [x for x in os.listdir(folder) if x.endswith('.pkl')]
+    list_vnums = [int(x.split('_')[2].lstrip('vnum-')) for x in contents_folder]
+    list_vnums = sorted(list_vnums)
+    print(list_vnums)
+    assert len(list_vnums) == len(contents_folder), f'Expected {len(contents_folder)} vnums, got {len(list_vnums)}'
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=list_vnums, path_stats=folder), split_use=split_use, folder=folder)
+    # return (tmp_df, tmp_details)
+    tmp_df['alpha_ratio_loss'] = tmp_df['alpha_ratio_loss'].apply(lambda x: f'{x:.3f}')
+    tmp_df['temperature'] = tmp_df['temperature'].apply(lambda x: f'{x:.2f}')
+    tmp_df['lr'] = tmp_df['lr'].apply(lambda x: f'{x:.5f}')
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks trained with random search. ' 
+     
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                                                    split_use=split_use, save_table=save_table, 
+                                                    filename='tab_randomsearch.tex', highlight_best_row=True,
+                                                label_tex='tab:randomsearch', caption_tex=caption,
+                                                sort_by_col='MSE')
     return (df_num_val, df_tex)
 
 def print_table_test(save_table=False, split_use='test', list_vnums=None):

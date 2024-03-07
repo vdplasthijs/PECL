@@ -52,7 +52,8 @@ if __name__ == '__main__':
     bool_save_full_model = True
     bool_stop_early = True
     list_seeds_model = [42, 17, 86]
-    n_combinations = 2
+    n_combinations = 50
+    eval_test_set = False
     
     ## Create all combinations of hyperparameters:
     print('Combinations will be run in this order:\n---------')
@@ -76,6 +77,7 @@ if __name__ == '__main__':
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['tb_log_folder'] = '/Users/t.vanderplas/models/PECL/random_search/'
+        hyperparams['eval_test_set'] = eval_test_set
     
         for seed in list_seeds_model:
             print(f'---- {i_it + 1}/{n_runs} (seed {seed}) ----')

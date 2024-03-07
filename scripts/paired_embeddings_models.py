@@ -511,6 +511,7 @@ class ImageEncoder(pl.LightningModule):
         self.time_created = time_created
         self.description = f'ImageEncoder with {n_enc_channels} encoding channels, {n_bands} bands, {n_species} species, {n_layers_mlp_resnet} MLP layers, {resnet_version} Resnet, {pecl_distance_metric} distance metric, {training_method} training method.'
         self.df_metrics = None 
+        self.test_metrics = None 
         self.build_class_weights(class_weights=class_weights)
         self.build_model()
         self.build_training_method(training_method=training_method, pred_train_loss=pred_train_loss)
@@ -988,9 +989,11 @@ class ImageEncoder(pl.LightningModule):
         assert self.df_metrics is not None, 'Metrics not stored yet.'
         assert os.path.exists(folder), f'Folder {folder} does not exist.'
         ## Save v_num that is used for tensorboard
-        self.v_num = self.logger.version
+        if self.v_num is None:
+            self.v_num = self.logger.version
         ## Save logging directory that is used for tensorboard
-        self.log_dir = self.logger.log_dir
+        if self.log_dir is None:
+            self.log_dir = self.logger.log_dir
 
         if self.model_name is None:
             timestamp = cdu.create_timestamp()
@@ -1018,9 +1021,11 @@ class ImageEncoder(pl.LightningModule):
         '''Save model'''
         assert self.df_metrics is not None, 'Metrics not stored yet.' 
         ## Save v_num that is used for tensorboard
-        self.v_num = self.logger.version
+        if self.v_num is None:
+            self.v_num = self.logger.version
         ## Save logging directory that is used for tensorboard
-        self.log_dir = self.logger.log_dir
+        if self.log_dir is None:
+            self.log_dir = self.logger.log_dir
         
         if self.model_name is None:
             timestamp = cdu.create_timestamp()
@@ -1070,9 +1075,12 @@ def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vander
     model = ImageEncoder.load_from_checkpoint(filepath)
     return model
 
-def load_stats(folder='/Users/t.vanderplas/models/PECL/stats/', filename=None, timestamp=None, verbose=1):
+def load_stats(folder=None, filename=None, timestamp=None, verbose=1):
     '''Load previously saved (pickled) stats'''
     assert (filename is not None and timestamp is None) or (filename is None and timestamp is not None), 'Provide either filename or timestamp, not both.'
+    if folder is None:
+        folder = '/Users/t.vanderplas/models/PECL/stats/'
+    
     if filename is None:
         list_files = os.listdir(folder)
         list_files = [f for f in list_files if f.endswith('.pkl')]
@@ -1169,7 +1177,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
-               filepath_train_val_split=None,
+               filepath_train_val_split=None, eval_test_set=True,
                tb_log_folder='/Users/t.vanderplas/models/PECL',
                save_model=False, save_stats=True):
     # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
@@ -1184,6 +1192,11 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         image_folder = '/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
     if presence_csv is None:
         presence_csv = '/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
+
+    stats_folder = os.path.join(tb_log_folder, 'stats')
+    model_folder = os.path.join(tb_log_folder, 'full_models')
+    assert os.path.exists(stats_folder), f'Folder {stats_folder} does not exist.'
+    assert os.path.exists(model_folder), f'Folder {model_folder} does not exist.'
 
     if use_mps:
         assert torch.backends.mps.is_available()
@@ -1214,12 +1227,11 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                           shuffle=True, persistent_workers=True) #drop_last=True, pin_memory=True
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
                         shuffle=False,  persistent_workers=True) 
-    if test_ds is not None:
+    if test_ds is not None and eval_test_set:
         test_dl = DataLoader(test_ds, batch_size=batch_size, num_workers=n_cpus, 
                              shuffle=False,  persistent_workers=True)
     else:
         test_dl = None
-        assert False, 'Test dataset not provided.'
 
     if model is None:
         time_created = cdu.create_timestamp(include_seconds=True)
@@ -1285,16 +1297,99 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     timestamp_end = datetime.datetime.now()
     print(f'-- Finished training at {timestamp_end}.')
 
-    if test_dl is not None:
-        trainer.test(dataloaders=test_dl, ckpt_path='best')
 
     model.store_val_metrics(metrics=cb_metrics.metrics)
-    model.store_test_metrics(metrics=cb_metrics.test_metrics)
+    if eval_test_set:
+        if test_dl is not None:
+            trainer.test(dataloaders=test_dl, ckpt_path='best')
+        model.store_test_metrics(metrics=cb_metrics.test_metrics)
     if save_stats:
-        model.save_stats(verbose=1)
+        model.save_stats(verbose=1, folder=stats_folder)
     if save_model:
-        model.save_model(verbose=1)
+        model.save_model(verbose=1, folder=model_folder)
     return model, (train_dl, val_dl, test_dl)
+
+def test_model(model=None, model_path=None, use_mps=True,
+               filepath_train_val_split=None, 
+                image_folder=None, presence_csv=None,
+               fix_seed=None, species_process='all',
+               save_stats=True, save_model=True,
+               tb_log_folder='/Users/t.vanderplas/models/PECL',):
+    assert model is not None or model_path is not None, 'Provide either model or model_path.'
+    assert not (model is not None and model_path is not None), 'Provide either model or model_path, not both.'
+    stats_folder = os.path.join(tb_log_folder, 'stats')
+    model_folder = os.path.join(tb_log_folder, 'full_models')
+    assert os.path.exists(stats_folder), f'Folder {stats_folder} does not exist.'
+    assert os.path.exists(model_folder), f'Folder {model_folder} does not exist.'
+
+    if model_path is not None:
+        model = load_model(folder=model_folder, filename=model_path, verbose=1)
+
+    if model.test_metrics is not None:
+        print('Model already has test metrics. Skipping testing.')
+        return model, (None, None, None)
+
+    if filepath_train_val_split is None:
+        filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
+        assert os.path.exists(filepath_train_val_split), f'File {filepath_train_val_split} does not exist.'
+
+    if fix_seed is not None:
+        pl.seed_everything(fix_seed)
+    else:
+        pl.seed_everything(model.seed_used)
+
+    if image_folder is None:
+        image_folder = '/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
+    if presence_csv is None:
+        presence_csv = '/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
+
+
+    if use_mps:
+        assert torch.backends.mps.is_available()
+        assert torch.backends.mps.is_built()
+        tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
+        n_cpus = 8
+        acc_use = 'gpu'
+    else:
+        assert torch.cuda.is_available(), 'No GPU available.'
+        tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
+        n_cpus = 8
+        acc_use = 'gpu'
+
+    ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
+                              shuffle_order_data=True, species_process=species_process,
+                              augment_image=True, 
+                              n_bands=model.n_bands, zscore_im=True, mode='train')
+    train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
+
+    test_dl = DataLoader(test_ds, batch_size=model.batch_size_used, num_workers=n_cpus, 
+                            shuffle=False,  persistent_workers=True)
+    cb_metrics = MetricsCallback()
+    callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
+                                            filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}"),
+                 cb_metrics]
+    
+    trainer = pl.Trainer(max_epochs=50, accelerator=acc_use,
+                         log_every_n_steps=5,  # train loss logging steps (each step = 1 batch)
+                         reload_dataloaders_every_n_epochs=1, # reload such that train_dl re-shuffles.  https://github.com/Lightning-AI/pytorch-lightning/discussions/7332
+                         callbacks=callbacks, logger=tb_logger)
+
+    ckpt_folder = os.path.join(tb_log_folder, 'lightning_logs', f'version_{model.v_num}', 'checkpoints')
+    contents_ckpt_folder = os.listdir(ckpt_folder)
+    assert len(contents_ckpt_folder) == 1, f'Expected 1 file in folder {ckpt_folder}, but got {len(contents_ckpt_folder)}'
+    assert contents_ckpt_folder[0].endswith('.ckpt'), f'File {contents_ckpt_folder[0]} should end with .ckpt'
+    ckpt_path = os.path.join(ckpt_folder, contents_ckpt_folder[0])
+    
+    trainer.test(model, dataloaders=test_dl, ckpt_path=ckpt_path)
+    model.store_test_metrics(metrics=cb_metrics.test_metrics)
+    
+    if save_stats:
+        model.save_stats(verbose=1, folder=stats_folder)
+    if save_model:
+        model.save_model(verbose=1, folder=model_folder)
+    return model, (None, None, test_dl)
+
+
 
 class MetricsCallback(pl.Callback):
     """PyTorch Lightning metric callback.
