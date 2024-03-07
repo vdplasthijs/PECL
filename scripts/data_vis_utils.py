@@ -86,16 +86,16 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     gdf_uk = gpd.read_file(path_map)
     gdf_uk.plot(ax=ax_map, color='k', alpha=0.5)
     # print(gdf_uk.crs)
-    gdf_uk.crs = 'epsg:27700'
+    # gdf_uk.crs = 'epsg:27700'
     # print(gdf_uk.crs)
 
     point_locs = ds.df_presence.tuple_coords
     # return point_locs
     point_locs = [shapely.geometry.Point(ast.literal_eval(loc)) for loc in point_locs]
     gdf_bms = gpd.GeoDataFrame(geometry=point_locs)
-
-    gdf_bms.plot(ax=ax_map, markersize=0.5, color=color_dict_stand[0])
-    ax_map.set_aspect('equal')
+    gdf_bms.crs = gdf_uk.crs
+    gdf_bms.plot(ax=ax_map, markersize=0.5, color=color_dict_stand[0], aspect='auto')
+    # ax_map.set_aspect('equal')
     ax_map.set_xlim(-8.2, 2)
     ax_map.set_ylim(49, 61)
     ax_map.axis('off')
@@ -137,9 +137,10 @@ def dataset_fig(ds, all_labels=None, save_fig=False,
     n_examples = len(example_inds)
     n_plots_top = 5
     fig = plt.figure(figsize=(10, 4))
-    gs_top = fig.add_gridspec(1, n_plots_top, wspace=0.5, hspace=0.5, top=0.95, bottom=0.6, left=0.02, right=0.98)
+    gs_map = fig.add_gridspec(1, 1, wspace=0.5, hspace=0.5, top=1, bottom=0.5, left=0.02, right=0.14)
+    gs_top = fig.add_gridspec(1, n_plots_top - 1, wspace=0.5, hspace=0.5, top=0.95, bottom=0.6, left=0.2, right=0.98)
     gs_bottom = fig.add_gridspec(1, n_examples, wspace=0.1, hspace=0.5, top=0.45, bottom=0.02, left=0.02, right=0.97)
-    ax_top = [fig.add_subplot(gs_top[i]) for i in range(n_plots_top)]
+    ax_top = [fig.add_subplot(gs_map[0])] + [fig.add_subplot(gs_top[i]) for i in range(n_plots_top - 1)]
     ax_bottom = [fig.add_subplot(gs_bottom[i]) for i in range(n_examples)]
 
     plot_stats_df_presence(ds, ax_hist_visits=ax_top[1], ax_hist_species=ax_top[2],
@@ -163,7 +164,7 @@ def dataset_fig(ds, all_labels=None, save_fig=False,
                  rotation=90)
 
     plt.draw()
-    rfv.add_panel_label(ax_top[0], label_letter='a', fontsize=14, x_offset=0.2)
+    rfv.add_panel_label(ax_top[0], label_letter='a', fontsize=14, x_offset=0.2, y_offset=-0.1)
     rfv.add_panel_label(ax_top[1], label_letter='b', fontsize=14)
     rfv.add_panel_label(ax_top[2], label_letter='c', fontsize=14)
     rfv.add_panel_label(ax_top[4], label_letter='d', fontsize=14)
@@ -204,9 +205,9 @@ def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
                                  bbox_inches='tight')
 
     return ax, inner_prod
-    
 
 def stack_all_labels(ds, normalise=True):
+    print('or just use df presence?')
     all_labels = []
     for sample in tqdm(ds):
         all_labels.append(sample[1][None, :])
@@ -371,6 +372,7 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
                            folder_save=os.path.join(path_dict_pecl['repo'], 'tables/'),
                            caption_tex=None, label_tex=None, position_tex='h',
                            highlight_best_row=False, drop_columns_tex=[],
+                           print_index_rank=False,
                            sort_by_col=None, sort_ascending=True):
     if split_use == 'val':
         metrics_show = ['val_top_10_acc', 'val_top_5_acc', 'val_mse_loss']
@@ -577,6 +579,12 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
             df_num_val = df_num_val.loc[inds_rows_sorted]
             df_num_val = df_num_val.reset_index(drop=True)
 
+    if print_index_rank:
+        ## make left most column 
+        cols_tex = df_tex.columns
+        df_tex['Rank'] = np.arange(len(df_tex)) + 1
+        df_tex = df_tex[['Rank'] + list(cols_tex)]
+
     if save_table:
         assert filename is not None, 'Filename not specified'
         assert os.path.exists(folder_save), f'Folder {folder_save} does not exist'
@@ -715,12 +723,17 @@ def print_table_mlplayers_pretrained_lr(save_table=True, split_use='test'):
     return (df_num_val, df_tex)
 
 def print_table_model_changes(save_table=True, split_use='test'):
-    list_vnums = list(np.arange(405, 411))  # 6 runs freeze=False [diff LR]
+    # list_vnums = list(np.arange(405, 411))  # 6 runs freeze=False [diff LR]
+    list_vnums = [405, 406, 407]  # 3 runs freeze=False [LR 0.001]
+    # list_vnums = [408, 409, 410]  # 3 runs freeze=False [LR] 0.0001]
     list_vnums = list_vnums + [335, 338, 341] # 3 runs freeze=True, seco 3 layer 
     list_vnums = list_vnums + [399, 401, 403]        ## add 3 runs with best alpha>0
+    list_ts_grid = get_list_timestamps_from_vnums(list_vnums=list_vnums)
+    # list_ts_random = get_list_timestamps_from_vnums(list_vnums=[54, 55, 56], path_stats='/Users/t.vanderplas/models/PECL/random_search/stats/')
+    # list_ts = list_ts_grid + list_ts_random
+    list_ts = list_ts_grid
 
-    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
-        list_vnums=list_vnums), split_use=split_use)
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=list_ts, split_use=split_use)
     
     caption = 'Mean and standard error of the mean (SEM) of validation metrics for different model changes. ' \
                 'The best performing model for each metric is highlighted in bold.'
@@ -729,7 +742,8 @@ def print_table_model_changes(save_table=True, split_use='test'):
                                                 split_use=split_use, save_table=save_table, add_mean_rates=True,
                                                 filename='tab_model_changes.tex', highlight_best_row=True,
                                                 label_tex='tab:model_changes', caption_tex=caption,
-                                                drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss'])
+                                                drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss',
+                                                                  'Batch', '$k$'])
     
     return (df_num_val, df_tex)
 
@@ -778,13 +792,13 @@ def print_table_randomsearch(save_table=False, split_use='test', folder='/Users/
     tmp_df['alpha_ratio_loss'] = tmp_df['alpha_ratio_loss'].apply(lambda x: f'{x:.3f}')
     tmp_df['temperature'] = tmp_df['temperature'].apply(lambda x: f'{x:.2f}')
     tmp_df['lr'] = tmp_df['lr'].apply(lambda x: f'{x:.5f}')
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks trained with random search. ' 
+    caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks trained with random search, sorted by mean MSE. ' 
      
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
                                                     split_use=split_use, save_table=save_table, 
                                                     filename='tab_randomsearch.tex', highlight_best_row=True,
                                                 label_tex='tab:randomsearch', caption_tex=caption,
-                                                sort_by_col='MSE')
+                                                sort_by_col='MSE', print_index_rank=True)
     return (df_num_val, df_tex)
 
 def print_table_test(save_table=False, split_use='test', list_vnums=None):

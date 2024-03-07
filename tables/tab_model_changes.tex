@@ -1,15 +1,14 @@
 \begin{table}[h]
 \caption{Mean and standard error of the mean (SEM) of validation metrics for different model changes. The best performing model for each metric is highlighted in bold.}
 \label{tab:model_changes}
-\begin{tabular}{llllllll}
+\begin{tabular}{lllll}
 \toprule
-Freeze Res & LR & $k$ & $\alpha$ & Batch & Top-10 [\%] & Top-5 [\%] & MSE [1e-02] \\
+Freeze Res & $\alpha$ & Top-10 [\%] & Top-5 [\%] & MSE [1e-02] \\
 \midrule
-N/A & nan & nan & nan & nan & 67.3 & 58.7 & 1.39 \\
-False & 0.0001 & 1.0 & 0.0 & 64.0 & 68.2 $\pm$ 0.5 & 61.7 $\pm$ 0.7 & 1.29 $\pm$ 0.05 \\
-False & 0.001 & 1.0 & 0.0 & 64.0 & 68.2 $\pm$ 0.2 & 61.8 $\pm$ 0.8 & 1.32 $\pm$ 0.03 \\
-True & 0.001 & 2.0 & 0.0 & 64.0 & 69.6 $\pm$ 0.2 & \textbf{62.4 $\pm$ 1.0} & 1.21 $\pm$ 0.04 \\
-True & 0.001 & 5.0 & 0.1 & 32.0 & \textbf{70.0 $\pm$ 0.2} & 62.3 $\pm$ 0.6 & \textbf{1.21 $\pm$ 0.03} \\
+N/A & nan & 67.3 & 58.7 & 1.39 \\
+False & 0.0 & 68.2 $\pm$ 0.2 & 61.8 $\pm$ 0.8 & 1.32 $\pm$ 0.03 \\
+True & 0.0 & 69.6 $\pm$ 0.2 & \textbf{62.4 $\pm$ 1.0} & 1.21 $\pm$ 0.04 \\
+True & 0.1 & \textbf{70.0 $\pm$ 0.2} & 62.3 $\pm$ 0.6 & \textbf{1.21 $\pm$ 0.03} \\
 \bottomrule
 \end{tabular}
 \end{table}
