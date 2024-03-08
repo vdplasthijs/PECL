@@ -52,7 +52,7 @@ if __name__ == '__main__':
     bool_save_full_model = True
     bool_stop_early = True
     list_seeds_model = [42, 17, 86]
-    n_combinations = 50
+    n_combinations = 2
     eval_test_set = False
     
     ## Create all combinations of hyperparameters:

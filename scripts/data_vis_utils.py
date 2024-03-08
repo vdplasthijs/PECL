@@ -99,7 +99,7 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     ax_map.set_xlim(-8.2, 2)
     ax_map.set_ylim(49, 61)
     ax_map.axis('off')
-    ax_map.legend(['S2-BMS location'], loc='lower left', fontsize=8, bbox_to_anchor=(0, -.25))
+    # ax_map.legend(['S2-BMS location'], loc='lower left', fontsize=8, bbox_to_anchor=(0, -.25))
     # ax_map.set_title('UKBMS locations')
 
 def plot_data_split_stats(path_split=os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')):
@@ -317,8 +317,9 @@ def create_df_list_timestamps(list_ts, split_use='test', folder=None):
 
     return df, ('timestamp', hparams_use, metrics_use, metric_optimise)
 
-def create_df_val_timeseries(list_ts, n_epochs_expected=51):
-    dict_stats = load_list_timestamps(list_ts)
+def create_df_val_timeseries(list_ts, n_epochs_expected=51, dict_stats=None):
+    if dict_stats is None:
+        dict_stats = load_list_timestamps(list_ts)
     example_stats = dict_stats[list_ts[0]]
     hparams_exclude = ['class_weights']
     hparams_use = [h for h in  example_stats['hparams'].keys() if h not in hparams_exclude]
@@ -596,8 +597,8 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
     return df_num_val, df_tex
 
 def plot_val_timeseries(list_ts, ax=None, metric_show='val_top_10_acc', n_epochs_expected=51,
-                        hue_hparam=None):
-    df_hparams_unique, df_hparams_ident, dict_metrics = create_df_val_timeseries(list_ts)
+                        hue_hparam=None, dict_stats=None):
+    df_hparams_unique, df_hparams_ident, dict_metrics = create_df_val_timeseries(list_ts, dict_stats=dict_stats)
     
     cols_drop = ['time_created', 'timestamp', 'seed_used']
     df_hparams_unique = df_hparams_unique.drop(columns=cols_drop)
@@ -653,7 +654,7 @@ def print_table_batchsize(split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=np.arange(199, 217)), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different batch sizes. ' \
+    caption = 'Mean and SEM of validation metrics for different batch sizes. ' \
               'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -667,7 +668,7 @@ def print_table_alpha(split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=np.arange(164, 171)), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different values of the ' + r"$\alpha$" + ' ratio loss hyperparameter. ' \
+    caption = 'Mean and SEM of validation metrics for different values of the ' + r"$\alpha$" + ' ratio loss hyperparameter. ' \
               'The best performing model for each metric is highlighted in bold.'
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -686,7 +687,7 @@ def print_table_dropout(save_table=True, include_contrastive_reg=False, split_us
 
     if include_contrastive_reg:
         assert False, 'change caption'
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different dropout rates of the $\mathbf{z}$ embedding layer. ' \
+    caption = 'Mean and SEM of validation metrics for different dropout rates of the $\mathbf{z}$ embedding layer. ' \
               'Performance is stated for the prediction model without contrastive regularisation. ' 
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -700,7 +701,7 @@ def print_table_mlplayers_pretrained(save_table=True, split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks and varying number of MLP prediction layers. ' \
+    caption = 'Mean and SEM of validation metrics for different pretrained networks and varying number of MLP prediction layers. ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -713,7 +714,7 @@ def print_table_mlplayers_pretrained_lr(save_table=True, split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=np.arange(324, 360)), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
+    caption = 'Mean and SEM of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -735,7 +736,7 @@ def print_table_model_changes(save_table=True, split_use='test'):
 
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=list_ts, split_use=split_use)
     
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different model changes. ' \
+    caption = 'Mean and SEM of validation metrics for different model changes. ' \
                 'The best performing model for each metric is highlighted in bold.'
     
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -752,7 +753,7 @@ def print_table_cr(save_table=False, split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
+    caption = 'Mean and SEM of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -768,7 +769,7 @@ def print_table_cr_32(save_table=False, split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks with and without contrastive regularisation, '\
+    caption = 'Mean and SEM of validation metrics for networks with and without contrastive regularisation, '\
               'for various hyperparameter settings. Temperature $\tau = 0.5$ was used.'
      
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
@@ -776,7 +777,7 @@ def print_table_cr_32(save_table=False, split_use='test'):
                                                     filename='tab_cr_32.tex', highlight_best_row=True,
                                                 label_tex='tab:cr_32', caption_tex=caption,
                                                 sort_by_col='alpha_ratio_loss',
-                                                drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss'])
+                                                drop_columns_tex=['training_method', 'Hard labels', 'name_train_loss', 'Batch'])
     return (df_num_val, df_tex)
 
 
@@ -788,11 +789,11 @@ def print_table_randomsearch(save_table=False, split_use='test', folder='/Users/
     assert len(list_vnums) == len(contents_folder), f'Expected {len(contents_folder)} vnums, got {len(list_vnums)}'
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums, path_stats=folder), split_use=split_use, folder=folder)
-    # return (tmp_df, tmp_details)
+    return (tmp_df, tmp_details)
     tmp_df['alpha_ratio_loss'] = tmp_df['alpha_ratio_loss'].apply(lambda x: f'{x:.3f}')
     tmp_df['temperature'] = tmp_df['temperature'].apply(lambda x: f'{x:.2f}')
     tmp_df['lr'] = tmp_df['lr'].apply(lambda x: f'{x:.5f}')
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for networks trained with random search, sorted by mean MSE. ' 
+    caption = 'Mean and SEM of validation metrics for networks trained with random search, sorted by mean MSE. ' 
      
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
                                                     split_use=split_use, save_table=save_table, 
@@ -813,7 +814,7 @@ def print_table_test(save_table=False, split_use='test', list_vnums=None):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums), split_use=split_use)
 
-    caption = 'Mean and standard error of the mean (SEM) of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
+    caption = 'Mean and SEM of validation metrics for different pretrained networks, LR and varying number of MLP prediction layers.  ' \
             'The best performing model for each metric is highlighted in bold.'
 
     df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],

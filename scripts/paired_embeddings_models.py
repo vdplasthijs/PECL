@@ -1085,7 +1085,7 @@ def load_stats(folder=None, filename=None, timestamp=None, verbose=1):
         list_files = os.listdir(folder)
         list_files = [f for f in list_files if f.endswith('.pkl')]
         list_files = [f for f in list_files if timestamp in f]
-        assert len(list_files) == 1, f'Expected 1 file with timestamp {timestamp}, but got {len(list_files)}'
+        assert len(list_files) == 1, f'Expected 1 file with timestamp {timestamp} in {folder}, but got {len(list_files)}'
         filename = list_files[0]
     assert filename != '', 'Filename not provided.'
     assert filename.endswith('.pkl'), f'Filename {filename} should end with .pkl'
