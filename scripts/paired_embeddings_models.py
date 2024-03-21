@@ -983,7 +983,7 @@ class ImageEncoder(pl.LightningModule):
                 metrics_float[k] = v
         self.test_metrics = pd.DataFrame(metrics_float, index=[0])
 
-    def save_stats(self, folder='/Users/t.vanderplas/models/PECL/stats/',
+    def save_stats(self, folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/stats/',
                    verbose=1):
         '''Save logger stats & model params only. '''
         assert self.df_metrics is not None, 'Metrics not stored yet.'
@@ -1016,7 +1016,7 @@ class ImageEncoder(pl.LightningModule):
         if verbose > 0:
             print(f'Stats saved as {self.filename} at {self.filepath}')
 
-    def save_model(self, folder='/Users/t.vanderplas/models/PECL/full_models/', 
+    def save_model(self, folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/full_models/', 
                    verbose=1):
         '''Save model'''
         assert self.df_metrics is not None, 'Metrics not stored yet.' 
@@ -1040,7 +1040,7 @@ class ImageEncoder(pl.LightningModule):
             print(f'PECL-ImEn model saved as {self.filename} at {self.filepath}')
         return self.filepath
 
-def load_model(folder='/Users/t.vanderplas/models/PECL/full_models/', 
+def load_model(folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/full_models/', 
                filename='', verbose=1):
     '''Load previously saved (pickled) model'''
     assert filename != '', 'Filename not provided.'
@@ -1055,7 +1055,7 @@ def load_model(folder='/Users/t.vanderplas/models/PECL/full_models/',
 
     return model 
 
-def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vanderplas/models/PECL/lightning_logs/'):
+def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/lightning_logs/'):
     '''Load model from checkpoint file.'''
     assert filepath is not None or v_num is not None, 'Version number and filepath not provided.'
     if filepath is None:
@@ -1079,7 +1079,7 @@ def load_stats(folder=None, filename=None, timestamp=None, verbose=1):
     '''Load previously saved (pickled) stats'''
     assert (filename is not None and timestamp is None) or (filename is None and timestamp is not None), 'Provide either filename or timestamp, not both.'
     if folder is None:
-        folder = '/Users/t.vanderplas/models/PECL/stats/'
+        folder = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/stats/'
     
     if filename is None:
         list_files = os.listdir(folder)
@@ -1178,7 +1178,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None, eval_test_set=True,
-               tb_log_folder='/Users/t.vanderplas/models/PECL',
+               tb_log_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL',
                save_model=False, save_stats=True):
     # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
     if filepath_train_val_split is None:
@@ -1189,9 +1189,9 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         pl.seed_everything(fix_seed)
 
     if image_folder is None:
-        image_folder = '/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
+        image_folder = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
     if presence_csv is None:
-        presence_csv = '/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
+        presence_csv = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
 
     stats_folder = os.path.join(tb_log_folder, 'stats')
     model_folder = os.path.join(tb_log_folder, 'full_models')
@@ -1205,7 +1205,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         n_cpus = 8
         acc_use = 'gpu'
         # acc_use = 'cpu'
-        folder_save = '/Users/t.vanderplas/models/PECL/'
+        folder_save = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/'
     else:
         assert torch.cuda.is_available(), 'No GPU available.'
         tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
@@ -1314,7 +1314,7 @@ def test_model(model=None, model_path=None, use_mps=True,
                 image_folder=None, presence_csv=None,
                fix_seed=None, species_process='all',
                save_stats=True, save_model=True,
-               tb_log_folder='/Users/t.vanderplas/models/PECL',):
+               tb_log_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL',):
     assert model is not None or model_path is not None, 'Provide either model or model_path.'
     assert not (model is not None and model_path is not None), 'Provide either model or model_path, not both.'
     stats_folder = os.path.join(tb_log_folder, 'stats')
@@ -1339,9 +1339,9 @@ def test_model(model=None, model_path=None, use_mps=True,
         pl.seed_everything(model.seed_used)
 
     if image_folder is None:
-        image_folder = '/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
+        image_folder = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
     if presence_csv is None:
-        presence_csv = '/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
+        presence_csv = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
 
 
     if use_mps:

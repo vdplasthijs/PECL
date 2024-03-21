@@ -82,7 +82,7 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
 
     if path_map is None:
         ## https://www.diva-gis.org/gdata
-        path_map = '/Users/t.vanderplas/data/GBR_adm/GBR_adm0.shp'
+        path_map = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/GBR_adm/GBR_adm0.shp'
     gdf_uk = gpd.read_file(path_map)
     gdf_uk.plot(ax=ax_map, color='k', alpha=0.5)
     # print(gdf_uk.crs)
@@ -231,8 +231,8 @@ def get_mean_rates_results(use_precomputed=True, train_test_filepath='../../cont
                         'top_10': [0.6731182336807251],
                         'top_20': [0.8432795405387878]}
     else:
-        ds = pem.DataSetImagePresence(image_folder='/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/',
-                              presence_csv='/Users/t.vanderplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv',
+        ds = pem.DataSetImagePresence(image_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/',
+                              presence_csv='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv',
                               species_process='all',
                               zscore_im=True, 
                               augment_image=True, mode='val')

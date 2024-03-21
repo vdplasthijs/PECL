@@ -446,7 +446,7 @@ def download_gee_image(df_mapping_locs_row, use_point=False,
     name_loc = df_mapping_locs_row.name_loc
 
     if path_save is None:
-        path_save = f'/Users/t.vanderplas/data/UKBMS_sent2_ds/sent2-4band/{year}/m-{month_start_str}-{month_end_str}/'
+        path_save = f'/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/{year}/m-{month_start_str}-{month_end_str}/'
     if not os.path.exists(path_save):
         os.makedirs(path_save)
 
