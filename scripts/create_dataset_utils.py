@@ -34,9 +34,9 @@ import api_keys
 sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
 import rep_fig_vis as rfv
 
-ee.Authenticate()
-ee.Initialize(project=api_keys.GEE_API)
-geemap.ee_initialize()
+# ee.Authenticate()
+# ee.Initialize(project=api_keys.GEE_API)
+# geemap.ee_initialize()
 
 
 def load_df_gbif(path_gbif_ds=None, verbose=1):
