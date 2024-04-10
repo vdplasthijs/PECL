@@ -1,6 +1,5 @@
 import os
 import torch, torchvision
-import pytorch_lightning as pl
 from pytorch_lightning.utilities.migration import pl_legacy_patch
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()

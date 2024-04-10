@@ -1,12 +1,9 @@
-from json import encoder
-import os, sys, copy, shutil, ast
+import os, sys, copy, ast
 import numpy as np
 from tqdm import tqdm
 import datetime, pickle
-import random
 import pickle
 import pandas as pd 
-import geopandas as gpd
 import rasterio
 import rasterio.features
 import rioxarray as rxr
@@ -18,7 +15,6 @@ from sklearn.decomposition import PCA
 from sklearn.cluster import DBSCAN
 from sklearn.model_selection import GroupShuffleSplit
 from geopy.distance import distance as geodist # avoid naming confusion
-from scipy.spatial.distance import cdist
 
 import torch
 from torch import nn
@@ -26,10 +22,9 @@ import torch.nn.functional as F
 import torchvision.models as models
 import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
-import torchmetrics
 from torchvision.transforms import v2
 # from torchvision import transforms
-import torchvision.transforms.functional as TF
+# import torchvision.transforms.functional as TF
 import pytorch_lightning as pl
 from pytorch_lightning import loggers as pl_loggers
 

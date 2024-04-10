@@ -2,7 +2,6 @@
 
 import os, sys 
 import paired_embeddings_models as pem
-import itertools
 import loadpaths_pecl
 import numpy as np
 path_dict_pecl = loadpaths_pecl.loadpaths()

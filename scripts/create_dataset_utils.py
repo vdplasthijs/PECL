@@ -13,7 +13,6 @@ import datetime
 # from shapely.errors import ShapelyDeprecationWarning
 # warnings.filterwarnings("ignore", category=ShapelyDeprecationWarning) 
 import geopandas as gpd
-# import h3pandas 
 from tqdm import tqdm
 import scipy 
 from matplotlib.colors import ListedColormap
