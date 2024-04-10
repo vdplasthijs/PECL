@@ -13,7 +13,7 @@ import matplotlib
 import torch
 import torch.nn.functional as F
 import paired_embeddings_models as pem
-
+from DataSetImagePresence import DataSetImagePresence
 from cycler import cycler
 ## Create list with standard colors:
 import seaborn as sns
@@ -227,7 +227,7 @@ def get_mean_rates_results(use_precomputed=True, train_test_filepath='../../cont
                         'top_10': [0.6731182336807251],
                         'top_20': [0.8432795405387878]}
     else:
-        ds = pem.DataSetImagePresence(image_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/',
+        ds = DataSetImagePresence(image_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/',
                               presence_csv='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv',
                               species_process='all',
                               zscore_im=True, 
