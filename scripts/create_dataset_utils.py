@@ -27,16 +27,20 @@ sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/cnn-land-cover/scrip
 import land_cover_analysis as lca 
 import land_cover_visualisation as lcv
 import land_cover_models as lcm 
-import ee, geemap 
+
 sys.path.append(os.path.join(path_dict_pecl['repo'], 'content/'))
-import api_keys
 sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
 import rep_fig_vis as rfv
 
-# ee.Authenticate()
-# ee.Initialize(project=api_keys.GEE_API)
-# geemap.ee_initialize()
-
+ONLINE_ACCESS_TO_GEE = False 
+if ONLINE_ACCESS_TO_GEE:
+    import api_keys
+    import ee, geemap 
+    ee.Authenticate()
+    ee.Initialize(project=api_keys.GEE_API)
+    geemap.ee_initialize()
+else:
+    print('WARNING: ONLINE_ACCESS_TO_GEE is set to False, so no access to GEE')
 
 def load_df_gbif(path_gbif_ds=None, verbose=1):
     if path_gbif_ds is None:
@@ -382,6 +386,7 @@ def plot_clusters_species_per_loc(df_summary, species_list, threshold_clusters=2
 
 def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0, 
                   year=None, month_start_str='06', month_end_str='09'):
+    assert ONLINE_ACCESS_TO_GEE, 'Need to set ONLINE_ACCESS_TO_GEE to True to use this function'
     assert type(df_mapping_locs_row) == pd.Series, type(df_mapping_locs_row)
     if year is None:
         year = 2020
@@ -434,6 +439,7 @@ def download_gee_image(df_mapping_locs_row, use_point=False,
                         month_start_str='06', month_end_str='09',
                        year=None, path_save=None, 
                        remove_if_too_small=True, verbose=0):
+    assert ONLINE_ACCESS_TO_GEE, 'Need to set ONLINE_ACCESS_TO_GEE to True to use this function'
     if year is None:
         year = 2020
     im_gee = get_gee_image(df_mapping_locs_row=df_mapping_locs_row, 
