@@ -6,14 +6,14 @@ Resnet-based model to predict species presence vectors from satellite images. Th
 - Use conda to install packages using `pecl.yml`. 
 - Add your user profile data paths in `content/data_paths_pecl.json`. 
 
-## Loading the data:
+### Loading the data:
 - A link to the S2-BMS data set will be added soon.
 - A custom DataSet class is provided in `scripts/DataSetImagePresence.py`
 
-## PECL implementation
+### PECL implementation
 - Details will follow in the upcoming publication.
 - PyTorch implementation can be found in `scripts/paired_embeddings_models.py` (`ImageEncoder.pecl_loss()`).
 - Models are trained by running `scripts/train.py` and `scripts/train_randomsearch.py`.
 
-## Results
+### Results
 - The `notebooks/` folder contains the notebooks for creating figures/tables. 
