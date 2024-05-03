@@ -91,7 +91,8 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
     gdf_bms = gpd.GeoDataFrame(geometry=point_locs)
     gdf_bms.crs = gdf_uk.crs
     gdf_bms.plot(ax=ax_map, markersize=0.5, color=color_dict_stand[0], aspect='auto')
-    # ax_map.set_aspect('equal')
+    # gdf_bms = gdf_bms.iloc[[126, 167, 370, 457]]
+    # gdf_bms.plot(ax=ax_map, markersize=5, color=color_dict_stand[0], aspect='auto')
     ax_map.set_xlim(-8.2, 2)
     ax_map.set_ylim(49, 61)
     ax_map.axis('off')
