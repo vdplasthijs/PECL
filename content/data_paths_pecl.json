@@ -10,6 +10,8 @@
       "repo": "/Users/t.vanderplas/repos/PECL/",
       "data_folder": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/",
       "ukbms_full_dataset": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/gbif/0047997-231120084113126.zip",
+      "ukbms_images": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/",
+      "ukbms_presence": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv",
       "seco_resnet50_1m": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/seco/seco_resnet50_1m.ckpt",
       "seco_resnet18_1m": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/seco/seco_resnet18_1m.ckpt"
               }

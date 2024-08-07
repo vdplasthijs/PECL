@@ -20,6 +20,7 @@ path_dict_pecl = loadpaths_pecl.loadpaths()
 import create_dataset_utils as cdu 
 from load_seco_resnet import map_seco_to_torchvision_weights
 from DataSetImagePresence import DataSetImagePresence
+
 class ImageEncoder(pl.LightningModule):
     '''
     Encode image using CNN Resnet + FCN.
@@ -765,9 +766,9 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         pl.seed_everything(fix_seed)
 
     if image_folder is None:
-        image_folder = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
+        image_folder = path_dict_pecl['ukbms_images']
     if presence_csv is None:
-        presence_csv = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
+        presence_csv = path_dict_pecl['ukbms_presence']
 
     stats_folder = os.path.join(tb_log_folder, 'stats')
     model_folder = os.path.join(tb_log_folder, 'full_models')
@@ -915,10 +916,9 @@ def test_model(model=None, model_path=None, use_mps=True,
         pl.seed_everything(model.seed_used)
 
     if image_folder is None:
-        image_folder = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/2019/m-06-09/'
+        image_folder = path_dict_pecl['ukbms_images']
     if presence_csv is None:
-        presence_csv = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv'
-
+        presence_csv = path_dict_pecl['ukbms_presence']
 
     if use_mps:
         assert torch.backends.mps.is_available()
