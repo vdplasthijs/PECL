@@ -170,16 +170,19 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         if len(self.suffix_images) == 1:
             im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images[0]}'
             im_file_path = os.path.join(self.image_folder, im_file_name)
-            return im_file_path
+            if os.path.exists(im_file_path):
+                return im_file_path
         else:
             for s in self.suffix_images:
                 im_file_name = f'{self.prefix_images}_{name_loc}_{s}'
                 im_file_path = os.path.join(self.image_folder, im_file_name)
                 if os.path.exists(im_file_path):
                     return im_file_path
-    
+        return None
+
     def load_image(self, name_loc):
         im_file_path = self.find_image_path(name_loc=name_loc)
+        assert im_file_path is not None, f'Image file for location {name_loc} not found.'
         im = load_tiff(im_file_path, datatype='np')
         
         if self.n_bands == 4:
@@ -350,7 +353,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             test_ds = None
         return train_ds, val_ds, test_ds
     
-    def split_and_save(self, split_fun='spatial_clusters', create_test=True):
+    def split_and_save(self, split_fun='spatial_clusters', create_test=True, save_indices=True):
         if split_fun == 'random':
             print('WARNING: splitting randomly')
             assert False, 'This is not implemented.'
@@ -400,7 +403,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
                 assert len(np.intersect1d(clusters_train, clusters_test)) == 0, np.intersect1d(clusters_train, clusters_test)
                 assert len(np.intersect1d(clusters_val, clusters_test)) == 0, np.intersect1d(clusters_val, clusters_test)
 
-                print(f'Create {len(train_inds)} train, {len(val_inds)} val, {len(test_inds)} test indices.')
+                print(f'Created {len(train_inds)} train, {len(val_inds)} val, {len(test_inds)} test indices.')
                 split_indices = {'train_indices': train_inds,
                                 'val_indices': val_inds,
                                 'test_indices': test_inds,
@@ -418,8 +421,9 @@ class DataSetImagePresence(torch.utils.data.Dataset):
                 split_indices = {'train_indices': train_inds,
                                   'val_indices': test_inds,
                                   'clusters': clusters}
-                print(f'Create {len(train_inds)} train, {len(test_inds)} val indices.')
+                print(f'Created {len(train_inds)} train, {len(test_inds)} val indices.')
         timestamp = cdu.create_timestamp()
-        torch.save(split_indices, os.path.join(path_dict_pecl['repo'], f'content/split_indices_{timestamp}.pth'))
-        print(f'Saved split indices to split_indices_{timestamp}.pth')
+        if save_indices:
+            torch.save(split_indices, os.path.join(path_dict_pecl['repo'], f'content/split_indices_{timestamp}.pth'))
+            print(f'Saved split indices to split_indices_{timestamp}.pth')
         return split_indices
