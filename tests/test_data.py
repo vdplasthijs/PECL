@@ -7,13 +7,12 @@ from DataSetImagePresence import DataSetImagePresence
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
 
-@pytest.fixture(params=['val', 'train'])
-def create_ds(request):
-    mode = request.param
-    ds = DataSetImagePresence(image_folder=path_dict_pecl['ukbms_images'],
-                              presence_csv=path_dict_pecl['ukbms_presence'],
-                              mode=mode)
-    return ds
+'''NB: Data set (create_ds) loaded in conftest.py'''
+
+
+@pytest.mark.fast
+def test_split_path_exists(get_split_path):
+    assert os.path.exists(get_split_path), f'File {get_split_path} does not exist.'
 
 @pytest.mark.fast
 def test_datapaths():
@@ -78,3 +77,12 @@ def test_data_splitter(create_ds):
     assert len(set(splits['train_indices']) & set(splits['test_indices'])) == 0
     assert len(set(splits['val_indices']) & set(splits['test_indices'])) == 0
 
+def test_split_ds(create_ds, create_split_ds):
+    train_ds, val_ds, test_ds = create_split_ds
+    assert type(train_ds) == torch.utils.data.Subset
+    assert type(train_ds) == type(val_ds) and type(train_ds) == type(test_ds)
+    for ds in [train_ds, val_ds, test_ds]:
+        batch = ds[0]
+        assert len(batch) == 2
+        assert batch[0].shape == (create_ds.n_bands, 224, 224)
+        assert batch[1].shape == (create_ds.n_species,)

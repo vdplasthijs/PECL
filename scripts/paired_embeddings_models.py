@@ -392,7 +392,7 @@ class ImageEncoder(pl.LightningModule):
         elif self.pred_train_loss == 'weighted-bce' and self.class_weights is not None:
             loss = self.weighted_bce_loss(pres_pred, pres_vec)
         else:
-            assert False, f'Prediction training loss {self.pred_train_loss} not implemented.'
+            assert False, f'Prediction trapiining loss {self.pred_train_loss} not implemented.'
         return loss
                 
     def training_step(self, batch, batch_idx):
