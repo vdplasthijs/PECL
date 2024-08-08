@@ -18,7 +18,7 @@ scikit_learn==1.1.2
 scipy==1.14.0
 seaborn==0.13.2
 Shapely==2.0.5
-torch==2.1.1
+torch==2.2.0
 # torch==2.2.0.dev20231210
 torchvision==0.17
 # tqdm==4.65.0
