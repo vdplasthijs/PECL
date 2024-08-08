@@ -19,7 +19,7 @@
   "runner":
   {"paths": {
     "home": "/home/runner/",
-    "repo": "~",
+    "repo": "/home/runner/work/PECL/PECL",
     "ukbms_images": "",
     "ukbms_presence": ""
             }
