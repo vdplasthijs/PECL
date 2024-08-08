@@ -15,5 +15,13 @@
       "seco_resnet50_1m": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/seco/seco_resnet50_1m.ckpt",
       "seco_resnet18_1m": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/seco/seco_resnet18_1m.ckpt"
               }
+    },
+  "runner":
+  {"paths": {
+    "home": "/home/runner/",
+    "repo": "~",
+    "ukbms_images": "",
+    "ukbms_presence": ""
+            }
     }
 }

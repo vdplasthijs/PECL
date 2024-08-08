@@ -9,7 +9,8 @@ import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
 
 @pytest.fixture
-def create_model(create_ds):
+def create_model(create_ds, request):
+    use_mock = request.config.getoption("--use-mock")
     model = pem.ImageEncoder(n_species=create_ds.n_species, n_enc_channels=256, 
                              n_layers_mlp_resnet=1, n_layers_mlp_pred=2,
                              pred_train_loss='bce', 
@@ -18,13 +19,14 @@ def create_model(create_ds):
                             class_weights=None, # create_ds.weights_values if use_class_weights else None,
                             pecl_distance_metric='softmax',
                             normalise_embedding='l2',
-                            pecl_knn=5, pecl_knn_hard_labels=False,
+                            pecl_knn=2, pecl_knn_hard_labels=False,
                             lr=1e-3, n_bands=create_ds.n_bands, use_mps=True,
                             use_lr_scheduler=False,
                             training_method='pecl',
                             alpha_ratio_loss=0.5,
                             p_dropout=0, temperature=0.5,
-                            time_created=None, batch_size_used=64,
+                            time_created=None, 
+                            batch_size_used=4 if use_mock else 64,
                             verbose=1, seed_used=0)
     return model
 
@@ -82,7 +84,8 @@ def test_pass_using_mocked_data(create_model):
     bs = create_model.batch_size_used
     n_bands = create_model.n_bands
     n_species = create_model.n_species
-    batch = (torch.randn(bs, n_bands, 224, 224), torch.randn(bs, n_species))
+    batch = (torch.randn(bs, n_bands, 224, 224), torch.rand(bs, n_species))
+    create_model.pred_train_loss = 'bce'  # to avoid error (because create_model initialises with training_method='pecl' which sets pred_train_loss to None)
     for pass_name in ['forward_pass', 'pecl_pass', 'pred_and_pecl_pass', 'pred_pass']:
         loss, _, im_enc = getattr(create_model, pass_name)(batch)
         loss = loss.detach()

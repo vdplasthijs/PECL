@@ -40,7 +40,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
                  species_process='all', n_bands=4, zscore_im=True,
-                 mode='train',
+                 mode='train', use_testing_data=False,
                  augment_image=True, verbose=1):
         super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
@@ -48,6 +48,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.mode = mode
         self.verbose = verbose
         self.zscore_im = zscore_im
+        self.use_testing_data = use_testing_data
         if self.zscore_im:
             ## Values obtained from full data set (1336 images):
             self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
@@ -67,7 +68,9 @@ class DataSetImagePresence(torch.utils.data.Dataset):
                   prefix_name_loc='UKBMS_'):
         '''Expected format of name_loc in presence csv: UKBMS_loc-xxxxx, 
         in image folder: prefix_UKBMS_loc-xxxxx_suffix1_suffix2.tif.'''
-        
+        if self.use_testing_data:
+            self.set_test_data_paths()
+            
         assert os.path.exists(self.presence_csv), f"Presence csv does not exist: {self.presence_csv}"
         df_presence = pd.read_csv(self.presence_csv, index_col=0)
         locs_presence = [x.lstrip(prefix_name_loc) for x in df_presence['name_loc'].values]
@@ -165,6 +168,14 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         # self.weights_values = torch.tensor(self.weights.values).float()
         self.weights_values = self.weights.values
 
+    def set_test_data_paths(self):
+        '''Load mock data in the same format as load_data() for CI testing.'''
+        mock_presence_csv = os.path.join(path_dict_pecl['repo'], 'tests/data_test/presence_tests/ukbms_presence_test16.csv')
+        mock_image_folder = os.path.join(path_dict_pecl['repo'], 'tests/data_test/images_tests')
+        self.presence_csv = mock_presence_csv
+        self.image_folder = mock_image_folder
+        print(f'Loading mock data from {mock_presence_csv} and {mock_image_folder}.')
+        
     def find_image_path(self, name_loc):
         
         if len(self.suffix_images) == 1:

@@ -315,6 +315,7 @@ class ImageEncoder(pl.LightningModule):
                 flatten_dist = False
             else:
                 flatten_dist = True
+            assert pres_vec.shape[0] >= self.pecl_knn, f'Batch size {pres_vec.shape[0]} must be >= knn {self.pecl_knn}.'
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist, temperature=self.temperature)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels,
@@ -327,6 +328,7 @@ class ImageEncoder(pl.LightningModule):
             dist_array_pres = dist_array_pres[inds_one]
 
             ## cross entropy loss
+            assert (dist_array_pres > 0).any(), dist_array_pres
             assert (dist_array_ims >= 0).all(), (dist_array_ims, im_enc)
             assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
@@ -392,7 +394,7 @@ class ImageEncoder(pl.LightningModule):
         elif self.pred_train_loss == 'weighted-bce' and self.class_weights is not None:
             loss = self.weighted_bce_loss(pres_pred, pres_vec)
         else:
-            assert False, f'Prediction trapiining loss {self.pred_train_loss} not implemented.'
+            assert False, f'Prediction training loss {self.pred_train_loss} not implemented.'
         return loss
                 
     def training_step(self, batch, batch_idx):

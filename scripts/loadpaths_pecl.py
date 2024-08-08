@@ -30,7 +30,7 @@ def loadpaths(username=None):
         config_info = json.load(config_file)
         assert username in config_info.keys(), f'Please add your username {username} and data paths to cnn-land-cover/data_paths.json'
         user_paths_dict = config_info[username]['paths']  # extract paths from current user
-
+    assert user_paths_dict['repo'] == os.getcwd(), f'Please run this script from the repo root directory. Current directory: {os.getcwd()}. Repo directory: {user_paths_dict["repo"]}'
     # Expand tildes in the json paths
     user_paths_dict = {k: str(v) for k, v in user_paths_dict.items()}
     return {k: os.path.expanduser(v) for k, v in user_paths_dict.items()}

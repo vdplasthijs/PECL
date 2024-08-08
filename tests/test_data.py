@@ -9,11 +9,12 @@ path_dict_pecl = loadpaths_pecl.loadpaths()
 
 '''NB: Data set (create_ds) loaded in conftest.py'''
 
-
+# @pytest.mark.local
 @pytest.mark.fast
 def test_split_path_exists(get_split_path):
     assert os.path.exists(get_split_path), f'File {get_split_path} does not exist.'
 
+# @pytest.mark.local
 @pytest.mark.fast
 def test_datapaths():
     assert 'repo' in path_dict_pecl.keys()
@@ -28,10 +29,14 @@ def test_default_settings(create_ds):
     assert create_ds.augment_image
 
 @pytest.mark.fast
-def test_bms_properties(create_ds):
+def test_bms_properties(create_ds, request):
+    use_mock = request.config.getoption("--use-mock")
     assert create_ds.n_species == 62
     assert create_ds.n_bands == 4
-    assert len(create_ds.df_presence) == 1329
+    if use_mock:
+        assert len(create_ds.df_presence) == 16 
+    else:
+        assert len(create_ds.df_presence) == 1329
     assert len(create_ds.suffix_images) == 2
     
 @pytest.mark.fast
@@ -53,7 +58,7 @@ def test_load_random_data_point(create_ds):
 
 @pytest.mark.fast
 def test_find_location(create_ds):
-    name_existing_loc = 'UKBMS_loc-0023'
+    name_existing_loc = 'UKBMS_loc-0003'
     name_non_existing_loc = 'UKBMS_loc-9999'
     assert create_ds.find_image_path(name_existing_loc) is not None
     assert create_ds.find_image_path(name_non_existing_loc) is None
@@ -77,6 +82,7 @@ def test_data_splitter(create_ds):
     assert len(set(splits['train_indices']) & set(splits['test_indices'])) == 0
     assert len(set(splits['val_indices']) & set(splits['test_indices'])) == 0
 
+@pytest.mark.fast
 def test_split_ds(create_ds, create_split_ds):
     train_ds, val_ds, test_ds = create_split_ds
     assert type(train_ds) == torch.utils.data.Subset
