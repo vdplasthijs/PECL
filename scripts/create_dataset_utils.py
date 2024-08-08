@@ -8,6 +8,8 @@ import matplotlib.pyplot as plt
 import seaborn as sns 
 import shapely 
 import rasterio
+import xarray as xr
+import rioxarray as rxr
 from shapely.geometry import Point, Polygon
 import datetime
 # import warnings
