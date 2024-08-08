@@ -27,11 +27,8 @@ for ii, x in enumerate(plt.rcParams['axes.prop_cycle']()):
 sys.path.append('/Users/t.vanderplas/repos/reproducible_figures/scripts/')
 import rep_fig_vis as rfv
 rfv.set_fontsize(10)
-# sys.path.append(os.path.join(path_dict_pecl['repo'], 'content/'))
-# import api_keys
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
-# import create_dataset_utils as cdu 
 
 fig_folder = '/Users/t.vanderplas/repos/PECL/figures/'
 

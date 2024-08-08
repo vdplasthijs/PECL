@@ -7,6 +7,7 @@ from dwca.read import DwCAReader
 import matplotlib.pyplot as plt
 import seaborn as sns 
 import shapely 
+import rasterio
 from shapely.geometry import Point, Polygon
 import datetime
 # import warnings
@@ -23,14 +24,14 @@ import json
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
 
-sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/cnn-land-cover/scripts/'))
-import land_cover_analysis as lca 
-import land_cover_visualisation as lcv
-import land_cover_models as lcm 
+# sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/cnn-land-cover/scripts/'))
+# import land_cover_analysis as lca 
+# import land_cover_visualisation as lcv
+# import land_cover_models as lcm 
 
 sys.path.append(os.path.join(path_dict_pecl['repo'], 'content/'))
-sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
-import rep_fig_vis as rfv
+# sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
+# import rep_fig_vis as rfv
 
 ONLINE_ACCESS_TO_GEE = False 
 if ONLINE_ACCESS_TO_GEE:
@@ -435,6 +436,22 @@ def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0,
     
     return ex_im_gee
 
+def load_tiff(tiff_file_path, datatype='np', verbose=0):
+    '''Load tiff file as np or da'''
+    with rasterio.open(tiff_file_path) as f:
+        if verbose > 0:
+            print(f.profile)
+        if datatype == 'np':  # handle different file types 
+            im = f.read()
+            assert type(im) == np.ndarray
+        elif datatype == 'da':
+            im = rxr.open_rasterio(f)
+            assert type(im) == xr.DataArray
+        else:
+            assert False, 'datatype should be np or da'
+
+    return im 
+
 def download_gee_image(df_mapping_locs_row, use_point=False, 
                         month_start_str='06', month_end_str='09',
                        year=None, path_save=None, 
@@ -463,7 +480,7 @@ def download_gee_image(df_mapping_locs_row, use_point=False,
     )
 
     ## load & save to size correctly (because of buffer): 
-    im = lca.load_tiff(filepath, datatype='da')
+    im = load_tiff(filepath, datatype='da')
     desired_pixel_size = 256
     
     if verbose:
