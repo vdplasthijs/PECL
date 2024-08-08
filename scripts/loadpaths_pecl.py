@@ -28,7 +28,7 @@ def loadpaths(username=None):
     ## Load paths corresponding to username:
     with open(json_path, 'r') as config_file:
         config_info = json.load(config_file)
-        assert username in config_info.keys(), 'Please add your username and data paths to cnn-land-cover/data_paths.json'
+        assert username in config_info.keys(), f'Please add your username {username} and data paths to cnn-land-cover/data_paths.json'
         user_paths_dict = config_info[username]['paths']  # extract paths from current user
 
     # Expand tildes in the json paths
