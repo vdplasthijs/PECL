@@ -20,7 +20,7 @@ seaborn==0.13.2
 Shapely==2.0.5
 torch==2.1.1
 # torch==2.2.0.dev20231210
-torchvision=0.17s
+torchvision==0.17
 # tqdm==4.65.0
 tqdm==4.66.1
 xarray==2023.6.0
