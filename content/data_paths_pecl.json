@@ -20,8 +20,12 @@
   {"paths": {
     "home": "/home/runner/",
     "repo": "/home/runner/work/PECL/PECL",
+    "data_folder": "",
+    "ukbms_full_dataset": "",
     "ukbms_images": "",
-    "ukbms_presence": ""
+    "ukbms_presence": "",
+    "seco_resnet50_1m": "",
+    "seco_resnet18_1m": ""
             }
     }
 }
