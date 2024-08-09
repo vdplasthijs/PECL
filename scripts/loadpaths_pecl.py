@@ -24,6 +24,11 @@ def loadpaths(username=None):
 
     if username is None:
         username = getpass.getuser()  # get username of PC account
+        if username == 'runner':
+            if os.uname().sysname == 'Darwin':
+                username = 'runner_Darwin'
+            else:
+                username = 'runner_Linux'
 
     ## Load paths corresponding to username:
     with open(json_path, 'r') as config_file:
