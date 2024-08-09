@@ -14,7 +14,7 @@ def create_model(create_ds, request):
     model = pem.ImageEncoder(n_species=create_ds.n_species, n_enc_channels=256, 
                              n_layers_mlp_resnet=1, n_layers_mlp_pred=2,
                              pred_train_loss='bce', 
-                            pretrained_resnet='seco', freeze_resnet=True,
+                            pretrained_resnet='imagenet', freeze_resnet=True,
                             optimizer_name='Adam', resnet_version=18,
                             class_weights=None, # create_ds.weights_values if use_class_weights else None,
                             pecl_distance_metric='softmax',
