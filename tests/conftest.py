@@ -14,8 +14,8 @@ def pytest_addoption(parser):
 def create_ds(request):
     mode = request.param
     use_mock = request.config.getoption("--use-mock")
-    ds = DataSetImagePresence(image_folder=path_dict_pecl['ukbms_images'],
-                            presence_csv=path_dict_pecl['ukbms_presence'],
+    ds = DataSetImagePresence(image_folder=path_dict_pecl['s2bms_images'],
+                            presence_csv=path_dict_pecl['s2bms_presence'],
                             mode=mode, use_testing_data=use_mock)
     return ds
 

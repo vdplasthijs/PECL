@@ -752,6 +752,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                normalise_embedding='l2', n_bands=4,
                training_method='pecl', lr=1e-3, batch_size=64, n_epochs_max=20, 
                image_folder=None, presence_csv=None,  # None will use default paths 
+               dataset_name='s2bms',
                species_process='all', p_dropout=0, temperature=0.5,
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
                use_lr_scheduler=False, stop_early=False,
@@ -768,9 +769,9 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         pl.seed_everything(fix_seed)
 
     if image_folder is None:
-        image_folder = path_dict_pecl['ukbms_images']
+        image_folder = path_dict_pecl[f'{dataset_name}_images']
     if presence_csv is None:
-        presence_csv = path_dict_pecl['ukbms_presence']
+        presence_csv = path_dict_pecl[f'{dataset_name}_presence']
 
     stats_folder = os.path.join(tb_log_folder, 'stats')
     model_folder = os.path.join(tb_log_folder, 'full_models')
@@ -799,7 +800,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              augment_image=True, 
+                              augment_image=True, dataset_name=dataset_name,
                               n_bands=n_bands, zscore_im=True, mode='train')
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
@@ -893,6 +894,7 @@ def test_model(model=None, model_path=None, use_mps=True,
                 image_folder=None, presence_csv=None,
                fix_seed=None, species_process='all',
                save_stats=True, save_model=True,
+               dataset_name='s2bms',
                tb_log_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL',):
     assert model is not None or model_path is not None, 'Provide either model or model_path.'
     assert not (model is not None and model_path is not None), 'Provide either model or model_path, not both.'
@@ -918,9 +920,9 @@ def test_model(model=None, model_path=None, use_mps=True,
         pl.seed_everything(model.seed_used)
 
     if image_folder is None:
-        image_folder = path_dict_pecl['ukbms_images']
+        image_folder = path_dict_pecl[f'{dataset_name}_images']
     if presence_csv is None:
-        presence_csv = path_dict_pecl['ukbms_presence']
+        presence_csv = path_dict_pecl[f'{dataset_name}_presence']
 
     if use_mps:
         assert torch.backends.mps.is_available()
@@ -936,7 +938,7 @@ def test_model(model=None, model_path=None, use_mps=True,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              augment_image=True, 
+                              augment_image=True, dataset_name=dataset_name,
                               n_bands=model.n_bands, zscore_im=True, mode='train')
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
 

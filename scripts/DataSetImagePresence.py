@@ -11,7 +11,7 @@ from geopy.distance import distance as geodist # avoid naming confusion
 import torch
 from torchvision.transforms import v2
 import rasterio
-import rasterio.features
+import rasterio.features, rasterio.plot
 import rioxarray as rxr
 import xarray as xr
 import rasterio
@@ -41,55 +41,70 @@ class DataSetImagePresence(torch.utils.data.Dataset):
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
                  species_process='all', n_bands=4, zscore_im=True,
                  mode='train', use_testing_data=False,
-                 augment_image=True, verbose=1):
-        super(DataSetImagePresence, self).__init__()
+                 augment_image=True, verbose=1, dataset_name='s2bms'):
+        # super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
         self.presence_csv = presence_csv
         self.mode = mode
         self.verbose = verbose
         self.zscore_im = zscore_im
         self.use_testing_data = use_testing_data
+        self.dataset_name = dataset_name
+        assert self.dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter'], f'Dataset name {self.dataset_name} not implemented.'
         if self.zscore_im:
-            ## Values obtained from full data set (1336 images):
-            self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
-            self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
+            if self.dataset_name == 's2bms':  ## Values obtained from full data set (1336 images)
+                self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
+                self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
+            elif self.dataset_name == 'satbird-kenya':  ## From SatBird stats/means_rgbnir.npy (and stds_)
+                self.norm_means = np.array([1905.25581818, 1700.55621907, 1554.70146535, 2432.34535847]).astype(np.float32) 
+                self.norm_std = np.array([1147.77209359,  777.33364953,  506.84587793, 1632.70761804]).astype(np.float32) 
+            elif self.dataset_name == 'satbird-usawinter':  ## From SatBird stats/means_rgbnir.npy (and stds_)
+                self.norm_means = np.array([2344.2988485, 2253.80917105, 2124.48143172, 3197.92686188]).astype(np.float32) 
+                self.norm_std = np.array([1739.14810048, 1714.90654424, 1763.818098, 1672.77914703]).astype(np.float32) 
             self.norm_means = self.norm_means[:, None, None]
             self.norm_std = self.norm_std[:, None, None]
         else:
             self.norm_means = None
             self.norm_std = None
+        if self.dataset_name == 's2bms':
+            self.prefix_name_loc = 'UKBMS_'   ## '''Expected format of name_loc in presence csv: UKBMS_loc-xxxxx, in image folder: prefix_UKBMS_loc-xxxxx_suffix1_suffix2.tif.'''
+            self.cols_not_species = ['tuple_coords', 'n_visits', 'name_loc']
+        elif 'satbird' in self.dataset_name:
+            self.prefix_name_loc = ''
+            self.cols_not_species = ['tuple_coords', 'n_visits', 'name_loc']
         self.augment_image = augment_image
         self.shuffle_order_data = shuffle_order_data
         self.species_process = species_process
         self.n_bands = n_bands
         self.load_data()
 
-    def load_data(self, cols_not_species=['tuple_coords', 'n_visits', 'name_loc'],
-                  prefix_name_loc='UKBMS_'):
-        '''Expected format of name_loc in presence csv: UKBMS_loc-xxxxx, 
-        in image folder: prefix_UKBMS_loc-xxxxx_suffix1_suffix2.tif.'''
+    def load_data(self):
         if self.use_testing_data:
             self.set_test_data_paths()
             
         assert os.path.exists(self.presence_csv), f"Presence csv does not exist: {self.presence_csv}"
         df_presence = pd.read_csv(self.presence_csv, index_col=0)
-        locs_presence = [x.lstrip(prefix_name_loc) for x in df_presence['name_loc'].values]
+        locs_presence = [x.lstrip(self.prefix_name_loc) for x in df_presence['name_loc'].values]
 
         assert os.path.exists(self.image_folder), f"Image folder does not exist: {self.image_folder}"
         content_image_folder = os.listdir(self.image_folder)
-        locs_images = [x.split('_')[2] for x in content_image_folder]
-        suffix_images = np.unique(['_'.join(x.split('_')[3:]) for x in content_image_folder])
-        self.suffix_images = suffix_images
-        prefix_images = np.unique([x.split('_')[0] for x in content_image_folder])
-        assert len(prefix_images) == 1, "Multiple prefixes found in image folder."
-        self.prefix_images = prefix_images[0]
-        self.prefix_name_loc = prefix_name_loc
+        if self.dataset_name == 's2bms':
+            locs_images = [x.split('_')[2] for x in content_image_folder]
+            suffix_images = np.unique(['_'.join(x.split('_')[3:]) for x in content_image_folder])
+            self.suffix_images = suffix_images
+            prefix_images = np.unique([x.split('_')[0] for x in content_image_folder])
+            assert len(prefix_images) == 1, "Multiple prefixes found in image folder."
+            self.prefix_images = prefix_images[0]
+        elif 'satbird' in self.dataset_name:
+            locs_images = [x.strip('.tif') for x in content_image_folder]
+            self.suffix_images = ['.tif']
+            self.prefix_images = ''
 
         tmp_is_present = np.array([True if x in locs_images else False for x in locs_presence])
         if self.verbose:
             print(f'Found {np.sum(tmp_is_present)} out of {len(tmp_is_present)} images in the image folder.')
 
-        df_presence = df_presence[df_presence['name_loc'].isin([f'{prefix_name_loc}{x}' for x in locs_images])]
+        df_presence = df_presence[df_presence['name_loc'].isin([f'{self.prefix_name_loc}{x}' for x in locs_images])]
         assert len(df_presence) == np.sum(tmp_is_present), "Mismatch between presence/absence data and image folder."
         if self.shuffle_order_data:
             print('Shuffling data.')
@@ -99,11 +114,12 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             df_presence = df_presence.sort_values(by='name_loc')
         df_presence = df_presence.reset_index(drop=True)
 
-        original_species_list = [x for x in df_presence.columns if x not in cols_not_species]
+        original_species_list = [x for x in df_presence.columns if x not in self.cols_not_species]
         n_original_species = len(original_species_list)
         if self.species_process == 'all':
             pass 
         elif self.species_process == 'priority_species' or self.species_process == 'priority_species_present':
+            assert self.dataset_name == 's2bms', 'Priority species only implemented for UKBMS data.'
             # priority_species = ['Carterocephalus palaemon', 'Thymelicus acteon', 'Leptidea sinapis',  # 'Leptidea juvernica', 
             #                     'Coenonympha tullia',
             #                     # 'Boloria euphrosyne', 
@@ -116,7 +132,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             
             for sp in priority_species:
                 assert sp in original_species_list, f'Indicator species {sp} not found in species list.'
-            cols_keep = cols_not_species + priority_species
+            cols_keep = self.cols_not_species + priority_species
             df_presence = df_presence[cols_keep]
             print(f'Only keeping {len(priority_species)}/{len(original_species_list)} species that are indicator species.')
             if self.species_process == 'priority_species_present':
@@ -129,7 +145,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             obs_per_species = df_presence[original_species_list].sum(axis=0)
             inds_sort = np.argsort(obs_per_species)
             cols_species_top20 = inds_sort[-20:]
-            cols_keep = cols_not_species + [original_species_list[x] for x in cols_species_top20]
+            cols_keep = self.cols_not_species + [original_species_list[x] for x in cols_species_top20]
             df_presence = df_presence[cols_keep]
             print(f'Only keeping top 20 species with most observations.')
         elif self.species_process == 'pca':
@@ -148,13 +164,13 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             self.pca_components = pca.components_
             self.pca = pca
 
-            df_presence = pd.concat([df_presence[cols_not_species], df_presence_pca], axis=1)
+            df_presence = pd.concat([df_presence[self.cols_not_species], df_presence_pca], axis=1)
             total_expl_var = np.sum(pca.explained_variance_ratio_)
             print(f'PCA with {n_pcs_keep} components explains {100 * total_expl_var:.1f}% of the variance.')
         else:
             assert False, f'Species process {self.species_process} not implemented.'
 
-        self.species_list = [x for x in df_presence.columns if x not in cols_not_species]
+        self.species_list = [x for x in df_presence.columns if x not in self.cols_not_species]
         self.df_presence = df_presence
         self.n_species = len(self.species_list)
 
@@ -177,9 +193,11 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         print(f'Loading mock data from {mock_presence_csv} and {mock_image_folder}.')
         
     def find_image_path(self, name_loc):
-        
         if len(self.suffix_images) == 1:
-            im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images[0]}'
+            if 'satbird' in self.dataset_name:
+                im_file_name = f'{name_loc}{self.suffix_images[0]}'
+            else:
+                im_file_name = f'{self.prefix_images}_{name_loc}_{self.suffix_images[0]}'
             im_file_path = os.path.join(self.image_folder, im_file_name)
             if os.path.exists(im_file_path):
                 return im_file_path
@@ -245,8 +263,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             im = augment_transforms(im)
             # im[:3, :, :] = augment_transforms_3band(im[:3, :, :])
         elif self.mode == 'val':
-            assert im.shape[1] == im.shape[2] == 256, f'Image shape {im.shape} not 256x256.'
-            im = im[:, 16:240, 16:240]  # Crop to centre 224x224  #TODO; use v2 CentreCrop
+            im = v2.CenterCrop(224)(im)
         
         return im
 

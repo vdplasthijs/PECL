@@ -77,6 +77,7 @@ if __name__ == '__main__':
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['tb_log_folder'] = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/random_search/'
         hyperparams['eval_test_set'] = eval_test_set
+        hyperparams['dataset_name'] = 's2bms'
     
         for seed in list_seeds_model:
             print(f'---- {i_it + 1}/{n_runs} (seed {seed}) ----')

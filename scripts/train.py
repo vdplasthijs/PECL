@@ -76,6 +76,7 @@ if __name__ == '__main__':
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
+        hyperparams['dataset_name'] = 's2bms'
 
         # if i_it <= 15:
         #     continue

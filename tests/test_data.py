@@ -9,17 +9,16 @@ path_dict_pecl = loadpaths_pecl.loadpaths()
 
 '''NB: Data set (create_ds) loaded in conftest.py'''
 
-# @pytest.mark.local
 @pytest.mark.fast
 def test_split_path_exists(get_split_path):
     assert os.path.exists(get_split_path), f'File {get_split_path} does not exist.'
 
-# @pytest.mark.local
 @pytest.mark.fast
 def test_datapaths():
     assert 'repo' in path_dict_pecl.keys()
-    assert 'ukbms_images' in path_dict_pecl.keys()
-    assert 'ukbms_presence' in path_dict_pecl.keys()
+    for dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter']:
+        assert f'{dataset_name}_images' in path_dict_pecl.keys()
+        assert f'{dataset_name}_presence' in path_dict_pecl.keys()
 
 @pytest.mark.fast
 def test_default_settings(create_ds):
