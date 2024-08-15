@@ -369,13 +369,16 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         assert filepath is not None 
         assert os.path.exists(filepath), f'Filepath {filepath} does not exist.'
         split_indices = torch.load(filepath)
-        train_ds = torch.utils.data.Subset(self, split_indices['train_indices'])
-        val_ds = torch.utils.data.Subset(self, split_indices['val_indices'])
+        train_inds = np.where(self.df_presence['name_loc'].isin(split_indices['train_indices']))[0]
+        val_inds = np.where(self.df_presence['name_loc'].isin(split_indices['val_indices']))[0]
+        train_ds = torch.utils.data.Subset(self, train_inds)
+        val_ds = torch.utils.data.Subset(self, val_inds)
 
         train_ds.dataset.mode = 'train'
         val_ds.dataset.mode = 'val'
         if 'test_indices' in split_indices.keys():
-            test_ds = torch.utils.data.Subset(self, split_indices['test_indices'])
+            test_inds = np.where(self.df_presence['name_loc'].isin(split_indices['test_indices']))[0]
+            test_ds = torch.utils.data.Subset(self, test_inds)
             test_ds.dataset.mode = 'val'
         else:
             test_ds = None
@@ -432,9 +435,12 @@ class DataSetImagePresence(torch.utils.data.Dataset):
                 assert len(np.intersect1d(clusters_val, clusters_test)) == 0, np.intersect1d(clusters_val, clusters_test)
 
                 print(f'Created {len(train_inds)} train, {len(val_inds)} val, {len(test_inds)} test indices.')
-                split_indices = {'train_indices': train_inds,
-                                'val_indices': val_inds,
-                                'test_indices': test_inds,
+                train_names = self.df_presence.iloc[train_inds]['name_loc']
+                val_names = self.df_presence.iloc[val_inds]['name_loc']
+                test_names = self.df_presence.iloc[test_inds]['name_loc']
+                split_indices = {'train_indices': train_names,
+                                'val_indices': val_names,
+                                'test_indices': test_names,
                                 'clusters': clusters}
             else:
                 ## Split into train and test:
@@ -446,12 +452,14 @@ class DataSetImagePresence(torch.utils.data.Dataset):
                 assert len(np.intersect1d(train_inds, test_inds)) == 0, np.intersect1d(train_inds, test_inds)
                 assert len(np.intersect1d(clusters_train, clusters_test)) == 0, np.intersect1d(clusters_train, clusters_test)
 
-                split_indices = {'train_indices': train_inds,
-                                  'val_indices': test_inds,
+                train_names = self.df_presence.iloc[train_inds]['name_loc']
+                test_names = self.df_presence.iloc[test_inds]['name_loc']
+                split_indices = {'train_indices': train_names,
+                                  'val_indices': test_names,
                                   'clusters': clusters}
                 print(f'Created {len(train_inds)} train, {len(test_inds)} val indices.')
         timestamp = cdu.create_timestamp()
         if save_indices:
-            torch.save(split_indices, os.path.join(path_dict_pecl['repo'], f'content/split_indices_{timestamp}.pth'))
+            torch.save(split_indices, os.path.join(path_dict_pecl['repo'], f'content/split_indices_{self.dataset_name}_{timestamp}.pth'))
             print(f'Saved split indices to split_indices_{timestamp}.pth')
         return split_indices

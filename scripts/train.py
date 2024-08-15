@@ -14,16 +14,16 @@ if __name__ == '__main__':
     ## Hyperparameters to search over:
     training_method = ['pred_and_pecl']
     species_process = ['all']
-    lr = [1e-3, 1e-4]
+    lr = [1e-3]
     batch_size = [64] 
-    pecl_knn = [1]
+    pecl_knn = [4]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
     pretrained_resnet = ['seco']
     n_enc_channels = [256] 
-    fix_seed = [42, 17, 86]
-    alpha_ratio_loss = [0]
-    freeze_resnet = [False]
+    fix_seed = [42]
+    alpha_ratio_loss = [0.1]
+    freeze_resnet = [True]
     p_dropout = [0]
     n_layers_mlp_pred = [3]
 
@@ -68,15 +68,20 @@ if __name__ == '__main__':
         ## Constant hyperparameters:
         hyperparams['use_class_weights'] = True
         hyperparams['pecl_distance_metric'] = 'softmax'
-        hyperparams['n_epochs_max'] = 50
+        hyperparams['n_epochs_max'] = 2
         hyperparams['n_layers_mlp_resnet'] = 1
         hyperparams['use_lr_scheduler'] = False
         hyperparams['normalise_embedding'] = 'l2'
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
-        hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
-        hyperparams['dataset_name'] = 's2bms'
+        hyperparams['dataset_name'] = 'satbird-kenya'
+        if hyperparams['dataset_name'] == 's2bms':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_s2bms_2024-08-14-1459.pth')
+        elif hyperparams['dataset_name'] == 'satbird-kenya':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_Kenya_2024-08-14-1506.pth')
+        elif hyperparams['dataset_name'] == 'satbird-usawinter':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_winter_2024-08-14-1506.pth')
 
         # if i_it <= 15:
         #     continue

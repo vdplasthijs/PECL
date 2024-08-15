@@ -315,7 +315,7 @@ class ImageEncoder(pl.LightningModule):
                 flatten_dist = False
             else:
                 flatten_dist = True
-            assert pres_vec.shape[0] >= self.pecl_knn, f'Batch size {pres_vec.shape[0]} must be >= knn {self.pecl_knn}.'
+            assert pres_vec.shape[0] >= self.pecl_knn, f'Batch size {pres_vec.shape[0]} must be >= knn {self.pecl_knn}.'   
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist, temperature=self.temperature)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels,
@@ -324,15 +324,15 @@ class ImageEncoder(pl.LightningModule):
                                                                 inner_prod_only=True)
                                                                 
             inds_one = torch.where(dist_array_pres > 0)
-            dist_array_ims = dist_array_ims[inds_one]
             dist_array_pres = dist_array_pres[inds_one]
-
             ## cross entropy loss
-            assert (dist_array_pres > 0).any(), dist_array_pres
+            assert (dist_array_pres > 0).any(), (dist_array_pres, im_enc.shape, pres_vec.shape, dist_array_ims.shape, dist_array_ims)
+
+            dist_array_ims = dist_array_ims[inds_one]
             assert (dist_array_ims >= 0).all(), (dist_array_ims, im_enc)
-            assert (dist_array_ims <= 1).all(), (dist_array_ims, im_enc)
+            assert (dist_array_ims <= 1.01).all(), (dist_array_ims, im_enc)
             assert (dist_array_pres >= 0).all(), (dist_array_pres, pres_vec)
-            assert (dist_array_pres <= 1).all(), (dist_array_pres, pres_vec)
+            assert (dist_array_pres <= 1.01).all(), (dist_array_pres, pres_vec, torch.where(dist_array_pres > 1), dist_array_pres[torch.where(dist_array_pres > 1)])  # changed to 1.01 because of numerical issues when vals = 1.000
             loss = (-1 * torch.log(dist_array_ims + 1e-8) * dist_array_pres).mean()
             assert loss >= 0, loss
         else:
@@ -707,8 +707,9 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
         assert knn > 0, f'Expected knn > 0, but got {knn}'
         if knn >= samples.shape[0] - 1:
             if suppress_knn_size_warning is False:
-                print(f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}. This can happen if final batch of data loader happens to be very small. Ignoring PECL here.')
-            return torch.zeros_like(inner_prod_mat)
+                print(f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}. This can happen if final batch of data loader happens to be very small. Setting k-1 to batch size for this batch only.')
+            # return torch.zeros_like(inner_prod_mat)
+            knn = samples.shape[0] - 1
         inner_prod_mat = inner_prod_mat - torch.diag(inner_prod_mat.diag())  # set diagonal to 0 so it doesn't get picked with KNN
         knn_inner_prod_mat = torch.zeros_like(inner_prod_mat)
         inds_positive = torch.topk(inner_prod_mat, k=knn, dim=1, largest=True, sorted=False)[1]
@@ -761,9 +762,17 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                tb_log_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL',
                save_model=False, save_stats=True):
     # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
+    assert dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter'], f'Dataset name {dataset_name} not implemented.'
+        
     if filepath_train_val_split is None:
-        filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
-        assert os.path.exists(filepath_train_val_split), f'File {filepath_train_val_split} does not exist.'
+        if dataset_name == 's2bms':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_s2bms_2024-08-14-1459.pth')
+        elif dataset_name == 'satbird-kenya':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_Kenya_2024-08-14-1506.pth')
+        elif dataset_name == 'satbird-usawinter':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_winter_2024-08-14-1506.pth')
+    
+    assert os.path.exists(filepath_train_val_split), f'File {filepath_train_val_split} does not exist.'
 
     if fix_seed is not None:
         pl.seed_everything(fix_seed)
