@@ -369,6 +369,13 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         assert filepath is not None 
         assert os.path.exists(filepath), f'Filepath {filepath} does not exist.'
         split_indices = torch.load(filepath)
+
+        n_in_splits = len(split_indices['train_indices']) + len(split_indices['val_indices'])
+        if 'test_indices' in split_indices:
+            n_in_splits += len(split_indices['test_indices'])
+        if n_in_splits != len(self):
+            print(f'WARNING: Number of indices in splits {n_in_splits} does not match number of samples {len(self)}.')
+
         train_inds = np.where(self.df_presence['name_loc'].isin(split_indices['train_indices']))[0]
         val_inds = np.where(self.df_presence['name_loc'].isin(split_indices['val_indices']))[0]
         train_ds = torch.utils.data.Subset(self, train_inds)

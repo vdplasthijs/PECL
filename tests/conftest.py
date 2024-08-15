@@ -24,7 +24,7 @@ def get_split_path(request):
     use_mock = request.config.getoption("--use-mock")
     if use_mock:
         filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 
-                                            'tests/data_test/split_indices_2024-08-08-1541.pth')
+                                            'tests/data_test/split_indices_s2bms_2024-08-15-1923_data-test.pth')
     else:
         filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 
                                             'content/split_indices_s2bms_2024-08-14-1459.pth')
