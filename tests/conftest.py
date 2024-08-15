@@ -27,7 +27,7 @@ def get_split_path(request):
                                             'tests/data_test/split_indices_2024-08-08-1541.pth')
     else:
         filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 
-                                            'content/split_indices_2024-03-04-1831.pth')
+                                            'content/split_indices_s2bms_2024-08-14-1459.pth')
     return filepath_train_val_split
 
 @pytest.fixture

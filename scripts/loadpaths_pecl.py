@@ -12,6 +12,15 @@ import sys
 import getpass
 from pathlib import Path
 
+def find_vcs_root(test=os.getcwd(), dirs=(".git",), default=None):
+    '''From https://stackoverflow.com/a/43786287/21221244'''
+    prev, test = None, os.path.abspath(test)
+    while prev != test:
+        if any(os.path.isdir(os.path.join(test, d)) for d in dirs):
+            return test
+        prev, test = test, os.path.abspath(os.path.join(test, os.pardir))
+    return default
+
 def loadpaths(username=None):
     '''Function that loads data paths from json file based on computer username'''
 
@@ -33,9 +42,21 @@ def loadpaths(username=None):
     ## Load paths corresponding to username:
     with open(json_path, 'r') as config_file:
         config_info = json.load(config_file)
-        assert username in config_info.keys(), f'Please add your username {username} and data paths to cnn-land-cover/data_paths.json'
+        if username not in config_info.keys():
+            print(f'WARNING: Using default paths and example data. To fix, please add your username <{username}> and data paths to PECL/content/data_paths.json')
+            username = 'default'
         user_paths_dict = config_info[username]['paths']  # extract paths from current user
-    # assert user_paths_dict['repo'] == os.getcwd(), f'Please run this script from the repo root directory. Current directory: {os.getcwd()}. Repo directory: {user_paths_dict["repo"]}'
+    
+    if username == 'default':
+        user_paths_dict['repo'] = find_vcs_root(__file__)
+        user_paths_dict['home'] = os.path.expanduser('~')
+        user_paths_dict['s2bms_images'] = os.path.join(user_paths_dict['repo'], 'tests/data_test/images_tests')
+        user_paths_dict['s2bms_presence'] = os.path.join(user_paths_dict['repo'], 'tests/data_test/presence_tests/ukbms_presence_test16.csv.csv')
+    
     # Expand tildes in the json paths
     user_paths_dict = {k: str(v) for k, v in user_paths_dict.items()}
     return {k: os.path.expanduser(v) for k, v in user_paths_dict.items()}
+
+if __name__ == '__main__':
+    # print(find_vcs_root(__file__))
+    print(loadpaths('test'))

@@ -1,7 +1,15 @@
 {
-  "thijs": 
+  "default": 
     {"paths": {
-      "home": "/home/thijs/"
+      "home": "TMP_DEFAULT",
+      "repo": "TMP_DEFAULT",
+      "data_folder": "",
+      "ukbms_full_dataset": "",
+      "s2bms_images": "TMP_DEFAULT",
+      "s2bms_presence": "TMP_DEFAULT",
+      "seco_resnet50_1m": "",
+      "seco_resnet18_1m": ""
+        
               }
     },
   "t.vanderplas": 

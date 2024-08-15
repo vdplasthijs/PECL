@@ -68,7 +68,7 @@ if __name__ == '__main__':
         ## Constant hyperparameters:
         hyperparams['use_class_weights'] = True
         hyperparams['pecl_distance_metric'] = 'softmax'
-        hyperparams['n_epochs_max'] = 2
+        hyperparams['n_epochs_max'] = 50
         hyperparams['n_layers_mlp_resnet'] = 1
         hyperparams['use_lr_scheduler'] = False
         hyperparams['normalise_embedding'] = 'l2'
