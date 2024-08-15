@@ -310,16 +310,20 @@ class ImageEncoder(pl.LightningModule):
         return loss, None, im_enc
 
     def pecl_loss(self, im_enc, pres_vec):
+        if im_enc.shape[0] == 1:
+            print('Batch size 1.')
+            return 0, im_enc
         if self.pecl_distance_metric == 'softmax':
             if self.pecl_knn is not None:
                 flatten_dist = False
             else:
                 flatten_dist = True
-            assert pres_vec.shape[0] >= self.pecl_knn, f'Batch size {pres_vec.shape[0]} must be >= knn {self.pecl_knn}.'   
+            # assert pres_vec.shape[0] >= self.pecl_knn, f'Batch size {pres_vec.shape[0]} must be >= knn {self.pecl_knn}.'   
             dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist, temperature=self.temperature)
             dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels,
                                                                 temperature=self.temperature,
+                                                                similarity_function='cosine',
                                                                 soft_weights_squared=True,  # only matters if hard labels is False
                                                                 inner_prod_only=True)
                                                                 
@@ -686,12 +690,13 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
         pass
     elif similarity_function == 'cosine':
         samples = F.normalize(samples, p=2, dim=1)
-        assert False, 'Expected samples to be already normalised..'
+        # assert False, 'Expected samples to be already normalised..'
     else:
         assert False, f'Similarity function {similarity_function} not implemented.'
 
     inner_prod_mat = torch.mm(samples, samples.t())
-    if inner_prod_only is False:
+
+    if inner_prod_only is False:  # convert to softmax distance
         inner_prod_mat = inner_prod_mat / temperature
         inner_prod_mat = torch.exp(inner_prod_mat)
         sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)

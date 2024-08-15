@@ -51,7 +51,7 @@ def loadpaths(username=None):
         user_paths_dict['repo'] = find_vcs_root(__file__)
         user_paths_dict['home'] = os.path.expanduser('~')
         user_paths_dict['s2bms_images'] = os.path.join(user_paths_dict['repo'], 'tests/data_test/images_tests')
-        user_paths_dict['s2bms_presence'] = os.path.join(user_paths_dict['repo'], 'tests/data_test/presence_tests/ukbms_presence_test16.csv.csv')
+        user_paths_dict['s2bms_presence'] = os.path.join(user_paths_dict['repo'], 'tests/data_test/presence_tests/ukbms_presence_test16.csv')
     
     # Expand tildes in the json paths
     user_paths_dict = {k: str(v) for k, v in user_paths_dict.items()}
