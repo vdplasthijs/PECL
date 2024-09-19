@@ -770,7 +770,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                tb_log_folder=path_dict_pecl['model_folder'],
                save_model=False, save_stats=True):
     # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
-    assert dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter'], f'Dataset name {dataset_name} not implemented.'
+    assert dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter', 'satbird-usasummer'], f'Dataset name {dataset_name} not implemented.'
         
     if filepath_train_val_split is None:
         if dataset_name == 's2bms':
@@ -779,7 +779,11 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_Kenya_2024-08-14-1506.pth')
         elif dataset_name == 'satbird-usawinter':
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_winter_2024-08-14-1506.pth')
-    
+        elif dataset_name == 'satbird-usasummer':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_summer_2024-09-19-1420.pth')
+        else:
+            assert False, f'Dataset name {dataset_name} not implemented.'
+
     assert os.path.exists(filepath_train_val_split), f'File {filepath_train_val_split} does not exist.'
 
     if fix_seed is not None:
@@ -821,9 +825,11 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                               n_bands=n_bands, zscore_im=True, mode='train')
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
-                          shuffle=True, persistent_workers=True) #drop_last=True, pin_memory=True
+                          shuffle=True, persistent_workers=True, #drop_last=True, pin_memory=True
+                          pin_memory=True, prefetch_factor=2)
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
-                        shuffle=False,  persistent_workers=True) 
+                        shuffle=False,  persistent_workers=True,
+                        pin_memory=True) 
     if test_ds is not None and eval_test_set:
         test_dl = DataLoader(test_ds, batch_size=batch_size, num_workers=n_cpus, 
                              shuffle=False,  persistent_workers=True)

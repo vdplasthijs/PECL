@@ -14,7 +14,6 @@ import rasterio
 import rasterio.features, rasterio.plot
 import rioxarray as rxr
 import xarray as xr
-import rasterio
 from tqdm import tqdm
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
@@ -50,17 +49,20 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.zscore_im = zscore_im
         self.use_testing_data = use_testing_data
         self.dataset_name = dataset_name
-        assert self.dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter'], f'Dataset name {self.dataset_name} not implemented.'
+        assert self.dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter', 'satbird-usasummer'], f'Dataset name {self.dataset_name} not implemented.'
         if self.zscore_im:
             if self.dataset_name == 's2bms':  ## Values obtained from full data set (1336 images)
                 self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
                 self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
-            elif self.dataset_name == 'satbird-kenya':  ## From SatBird stats/means_rgbnir.npy (and stds_)
+            elif self.dataset_name == 'satbird-kenya':  ## From SatBird Kenya OLD data folder: stats/means_rgbnir.npy (and stds_)
                 self.norm_means = np.array([1905.25581818, 1700.55621907, 1554.70146535, 2432.34535847]).astype(np.float32) 
                 self.norm_std = np.array([1147.77209359,  777.33364953,  506.84587793, 1632.70761804]).astype(np.float32) 
-            elif self.dataset_name == 'satbird-usawinter':  ## From SatBird stats/means_rgbnir.npy (and stds_)
+            elif self.dataset_name == 'satbird-usawinter':  ## From SatBird USA winter data folder: stats/means_rgbnir.npy (and stds_)
                 self.norm_means = np.array([2344.2988485, 2253.80917105, 2124.48143172, 3197.92686188]).astype(np.float32) 
                 self.norm_std = np.array([1739.14810048, 1714.90654424, 1763.818098, 1672.77914703]).astype(np.float32) 
+            elif self.dataset_name == 'satbird-usasummer':  ## From SatBird USA summer data folder: stats/means_rgbnir.npy (and stds_)
+                self.norm_means = np.array([1782.63124382, 1835.76085153, 1588.73908715, 3945.28647068]).astype(np.float32)
+                self.norm_std = np.array([ 805.13224798,  667.9370599 ,  643.96423834, 1304.8803265 ]).astype(np.float32)
             self.norm_means = self.norm_means[:, None, None]
             self.norm_std = self.norm_std[:, None, None]
         else:

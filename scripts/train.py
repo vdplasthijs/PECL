@@ -13,7 +13,7 @@ if __name__ == '__main__':
     bool_stop_early = True
 
     ## Hyperparameters to search over:
-    training_method = ['pred_and_pecl', 'pred_incl_enc']
+    training_method = ['pred']
     species_process = ['all']
     lr = [1e-3]
     batch_size = [64] 
@@ -22,7 +22,7 @@ if __name__ == '__main__':
     pred_train_loss = ['bce']
     pretrained_resnet = ['imagenet']
     n_enc_channels = [256] 
-    fix_seed = [42, 17, 86]
+    fix_seed = [42]# , 17, 86]
     alpha_ratio_loss = [0.1]
     freeze_resnet = [True]
     p_dropout = [0]
@@ -76,7 +76,7 @@ if __name__ == '__main__':
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
-        hyperparams['dataset_name'] = 's2bms'
+        hyperparams['dataset_name'] = 'satbird-usasummer'
         hyperparams['use_mps'] = USE_MPS
         if hyperparams['dataset_name'] == 's2bms':
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_s2bms_2024-08-14-1459.pth')
@@ -84,6 +84,10 @@ if __name__ == '__main__':
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_Kenya_2024-08-14-1506.pth')
         elif hyperparams['dataset_name'] == 'satbird-usawinter':
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_winter_2024-08-14-1506.pth')
+        elif hyperparams['dataset_name'] == 'satbird-usasummer':
+            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_summer_2024-09-19-1420.pth')
+        else:
+            raise ValueError(f'dataset_name {hyperparams["dataset_name"]} not recognised')
 
         # if i_it <= 15:
         #     continue
