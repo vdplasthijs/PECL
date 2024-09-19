@@ -160,3 +160,4 @@ cython_debug/
 #.idea/
 content/api_keys.py
 tests/test_template_pytest.py
+nano.save

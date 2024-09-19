@@ -5,6 +5,7 @@ import paired_embeddings_models as pem
 import itertools
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
+USE_MPS = False
 
 if __name__ == '__main__':
     ## Settings:
@@ -12,13 +13,13 @@ if __name__ == '__main__':
     bool_stop_early = True
 
     ## Hyperparameters to search over:
-    training_method = ['pred']
+    training_method = ['pred_and_pecl', 'pred_incl_enc']
     species_process = ['all']
     lr = [1e-3]
     batch_size = [64] 
     pecl_knn = [4]
     pecl_knn_hard_labels = [False]
-    pred_train_loss = ['ce', 'bce']
+    pred_train_loss = ['bce']
     pretrained_resnet = ['imagenet']
     n_enc_channels = [256] 
     fix_seed = [42, 17, 86]
@@ -58,7 +59,7 @@ if __name__ == '__main__':
             'alpha_ratio_loss': args[10],
             'freeze_resnet': args[11],
             'p_dropout': args[12],
-            'n_layers_mlp_pred': args[13],
+            'n_layers_mlp_pred': args[13]
         }
 
         print(f'---- {i_it}/{n_combinations} ----')
@@ -76,6 +77,7 @@ if __name__ == '__main__':
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['dataset_name'] = 's2bms'
+        hyperparams['use_mps'] = USE_MPS
         if hyperparams['dataset_name'] == 's2bms':
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_s2bms_2024-08-14-1459.pth')
         elif hyperparams['dataset_name'] == 'satbird-kenya':

@@ -118,7 +118,9 @@ class ImageEncoder(pl.LightningModule):
             print(f'Loaded {self.class_weights.shape[0]} class weights on {self.class_weights.device}.')
             if self.use_mps:
                 self.class_weights = self.class_weights.to('mps')
-                print(f'Class weights now on {self.class_weights.device}.')
+            else:
+                self.class_weights = self.class_weights.to('cuda')
+            print(f'Class weights now on {self.class_weights.device}.')
         else:
             print('No class weights.')
             self.class_weights = None
@@ -170,7 +172,7 @@ class ImageEncoder(pl.LightningModule):
     def build_model(self):
         ## Load Resnet, if needed modify first layer to accept 4 bands
         if self.pretrained_resnet == 'seco':
-            self.resnet = map_seco_to_torchvision_weights(model=None, device_use='mps' if self.use_mps else 'cpu',
+            self.resnet = map_seco_to_torchvision_weights(model=None, device_use='mps' if self.use_mps else 'gpu',
                                                           resnet_name=f'resnet{self.resnet_version}', verbose=0)
             self.pretrained_weights_name = f'seco_resnet{self.resnet_version}_1m'
             print('Loaded Resnet with SeCo weights.')
@@ -566,7 +568,7 @@ class ImageEncoder(pl.LightningModule):
                 metrics_float[k] = v
         self.test_metrics = pd.DataFrame(metrics_float, index=[0])
 
-    def save_stats(self, folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/stats/',
+    def save_stats(self, folder=os.path.join(path_dict_pecl['model_folder'], 'stats/'),
                    verbose=1):
         '''Save logger stats & model params only. '''
         assert self.df_metrics is not None, 'Metrics not stored yet.'
@@ -599,7 +601,7 @@ class ImageEncoder(pl.LightningModule):
         if verbose > 0:
             print(f'Stats saved as {self.filename} at {self.filepath}')
 
-    def save_model(self, folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/full_models/', 
+    def save_model(self, folder=os.path.join(path_dict_pecl['model_folder'], 'full_models/'), 
                    verbose=1):
         '''Save model'''
         assert self.df_metrics is not None, 'Metrics not stored yet.' 
@@ -623,7 +625,7 @@ class ImageEncoder(pl.LightningModule):
             print(f'PECL-ImEn model saved as {self.filename} at {self.filepath}')
         return self.filepath
 
-def load_model(folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/full_models/', 
+def load_model(folder=os.path.join(path_dict_pecl['model_folder'], 'full_models/'), 
                filename='', verbose=1):
     '''Load previously saved (pickled) model'''
     assert filename != '', 'Filename not provided.'
@@ -638,7 +640,8 @@ def load_model(folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlan
 
     return model 
 
-def load_model_from_ckpt(v_num=None, filepath=None, base_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/lightning_logs/'):
+def load_model_from_ckpt(v_num=None, filepath=None, 
+                         base_folder=os.path.join(path_dict_pecl['model_folder'], 'lightning_logs/')):
     '''Load model from checkpoint file.'''
     assert filepath is not None or v_num is not None, 'Version number and filepath not provided.'
     if filepath is None:
@@ -662,7 +665,7 @@ def load_stats(folder=None, filename=None, timestamp=None, verbose=1):
     '''Load previously saved (pickled) stats'''
     assert (filename is not None and timestamp is None) or (filename is None and timestamp is not None), 'Provide either filename or timestamp, not both.'
     if folder is None:
-        folder = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/stats/'
+        folder = os.path.join(path_dict_pecl['model_folder'], 'stats/')
     
     if filename is None:
         list_files = os.listdir(folder)
@@ -764,7 +767,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None, eval_test_set=True,
-               tb_log_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL',
+               tb_log_folder=path_dict_pecl['model_folder'],
                save_model=False, save_stats=True):
     # assert filepath_train_val_split is not None, 'Expecting filepath_train_val_split to be set.'
     assert dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter'], f'Dataset name {dataset_name} not implemented.'
@@ -798,14 +801,14 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
         n_cpus = 8
         acc_use = 'gpu'
-        # acc_use = 'cpu'
-        folder_save = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/'
+        # acc_use = 'cpu' 
     else:
         assert torch.cuda.is_available(), 'No GPU available.'
         tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
         n_cpus = 8
         acc_use = 'gpu'
-        folder_save = '/home/tplas/models/PECL/'
+        
+    folder_save = path_dict_pecl['model_folder']
     if not os.path.exists(folder_save):
         os.makedirs(folder_save)
         print(f'Created folder {folder_save}.')
@@ -909,7 +912,7 @@ def test_model(model=None, model_path=None, use_mps=True,
                fix_seed=None, species_process='all',
                save_stats=True, save_model=True,
                dataset_name='s2bms',
-               tb_log_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL',):
+               tb_log_folder=path_dict_pecl['model_folder']):
     assert model is not None or model_path is not None, 'Provide either model or model_path.'
     assert not (model is not None and model_path is not None), 'Provide either model or model_path, not both.'
     stats_folder = os.path.join(tb_log_folder, 'stats')

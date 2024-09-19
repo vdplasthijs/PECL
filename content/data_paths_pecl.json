@@ -3,6 +3,7 @@
     {"paths": {
       "home": "TMP_DEFAULT",
       "repo": "TMP_DEFAULT",
+      "model_folder": "TMP_DEFAULT",
       "data_folder": "",
       "ukbms_full_dataset": "",
       "s2bms_images": "TMP_DEFAULT",
@@ -16,6 +17,7 @@
     {"paths": {
       "home": "/Users/t.vanderplas/",
       "repo": "/Users/t.vanderplas/repos/PECL/",
+      "model_folder": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/",
       "data_folder": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/",
       "ukbms_full_dataset": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/gbif/0047997-231120084113126.zip",
       "s2bms_images": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/",
@@ -30,10 +32,30 @@
       "seco_resnet18_1m": "/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/seco/seco_resnet18_1m.ckpt"
               }
     },
+  "tplas": 
+    {"paths": {
+      "home": "/home/tplas/",
+      "repo": "/home/tplas/repos/PECL/",
+      "model_folder": "/home/tplas/models/PECL/",
+      "data_folder": "/home/tplas/data/UKBMS_sent2_ds/",
+      "ukbms_full_dataset": "",
+      "s2bms_images": "/home/tplas/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/",
+      "s2bms_presence": "/home/tplas/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv",
+      "satbird-kenya_images": "/media/data-hdd/satbird/Kenya/images/",
+      "satbird-kenya_presence": "/media/data-hdd/satbird/Kenya/df_satbird-kenya_presence.csv",
+      "satbird-usawinter_images": "",
+      "satbird-usawinter_presence": "",
+      "satbird-usasummer_images": "",
+      "satbird-usasummer_presence": "",
+      "seco_resnet50_1m": "",
+      "seco_resnet18_1m": ""
+              }
+    },
   "runner_Linux":
   {"paths": {
     "home": "/home/runner/",
     "repo": "/home/runner/work/PECL/PECL",
+    "model_folder": "",
     "data_folder": "",
     "ukbms_full_dataset": "",
     "s2bms_images": "",
@@ -52,6 +74,7 @@
   {"paths": {
     "home": "/Users/runner/",
     "repo": "/Users/runner/work/PECL/PECL",
+    "model_folder": "",
     "data_folder": "",
     "ukbms_full_dataset": "",
     "s2bms_images": "",
