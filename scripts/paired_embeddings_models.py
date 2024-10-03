@@ -297,6 +297,7 @@ class ImageEncoder(pl.LightningModule):
         im_enc = self.forward(im)
         if self.normalise_embedding == 'l2':
             pres_vec = F.normalize(pres_vec, p=2, dim=1)
+            ## im_enc is already normalized in forward()
 
         '''
         Maybe this should be split up.. Forward() should do the im_enc & pred.
@@ -720,7 +721,7 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
             knn = samples.shape[0] - 1
         inner_prod_mat = inner_prod_mat - torch.diag(inner_prod_mat.diag())  # set diagonal to 0 so it doesn't get picked with KNN
         knn_inner_prod_mat = torch.zeros_like(inner_prod_mat)
-        inds_positive = torch.topk(inner_prod_mat, k=knn, dim=1, largest=True, sorted=False)[1]
+        inds_positive = torch.topk(inner_prod_mat, k=knn, dim=1, largest=True, sorted=False)[1]  # top k per row
         if knn_hard_labels:
             knn_inner_prod_mat.scatter_(1, inds_positive, 1)
         else:
@@ -826,10 +827,10 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
     train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
                           shuffle=True, persistent_workers=True, #drop_last=True, pin_memory=True
-                          pin_memory=True, prefetch_factor=2)
+                          pin_memory=False, prefetch_factor=2)
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
                         shuffle=False,  persistent_workers=True,
-                        pin_memory=True) 
+                        pin_memory=False) 
     if test_ds is not None and eval_test_set:
         test_dl = DataLoader(test_ds, batch_size=batch_size, num_workers=n_cpus, 
                              shuffle=False,  persistent_workers=True)

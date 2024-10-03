@@ -19,9 +19,13 @@ import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
 import create_dataset_utils as cdu 
 import torch.utils.data
+import tifffile as tiff
 
 def load_tiff(tiff_file_path, datatype='np', verbose=0):
     '''Load tiff file as np or da'''
+    if datatype == 'np':
+        return load_geotiff(tiff_file_path)
+    
     with rasterio.open(tiff_file_path) as f:
         if verbose > 0:
             print(f.profile)
@@ -34,6 +38,16 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
         else:
             assert False, 'datatype should be np or da'
     return im 
+
+def load_geotiff(file):
+    '''From SatBird: SatBird/src/dataset/utils.py'''
+    img = tiff.imread(file)
+    new_band_order = [2, 1, 0, 3]  # r, g, b, nir
+    img = img[:, :, new_band_order].astype(float)
+    ## reshape to (bands, height, width)
+    # img = np.reshape(img, (img.shape[2], img.shape[0], img.shape[1]))  ## original SatBird, but not correct?
+    img = np.transpose(img, (2, 0, 1))
+    return img
 
 class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """

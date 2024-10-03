@@ -10,30 +10,32 @@ USE_MPS = False
 if __name__ == '__main__':
     ## Settings:
     bool_save_full_model = True
-    bool_stop_early = True
+    bool_stop_early = False
 
     ## Hyperparameters to search over:
-    training_method = ['pred']
+    training_method = ['pecl']
     species_process = ['all']
-    lr = [1e-3]
-    batch_size = [64] 
-    pecl_knn = [4]
+    lr = [1e-4]
+    batch_size = [256] 
+    pecl_knn = [2]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
-    pretrained_resnet = ['imagenet']
+    pretrained_resnet = [False]
     n_enc_channels = [256] 
-    fix_seed = [42]# , 17, 86]
+    fix_seed = [17]
     alpha_ratio_loss = [0.1]
-    freeze_resnet = [True]
+    freeze_resnet = [False]
     p_dropout = [0]
-    n_layers_mlp_pred = [3]
+    n_layers_mlp_pred = [1]
+    temperature = [0.8, 1, 1.5, 2]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
                                   n_enc_channels, lr, batch_size, pecl_knn, 
                                   pecl_knn_hard_labels, pred_train_loss, 
                                   pretrained_resnet, fix_seed, alpha_ratio_loss,
-                                  freeze_resnet, p_dropout, n_layers_mlp_pred))
+                                  freeze_resnet, p_dropout, n_layers_mlp_pred,
+                                  temperature))
     n_combinations = len(iterator)
     print('Combinations will be run in this order:\n---------')
     for i, args in enumerate(iterator):
@@ -59,7 +61,8 @@ if __name__ == '__main__':
             'alpha_ratio_loss': args[10],
             'freeze_resnet': args[11],
             'p_dropout': args[12],
-            'n_layers_mlp_pred': args[13]
+            'n_layers_mlp_pred': args[13],
+            'temperature': args[14]
         }
 
         print(f'---- {i_it}/{n_combinations} ----')
@@ -67,16 +70,16 @@ if __name__ == '__main__':
         print('-------------------')
 
         ## Constant hyperparameters:
-        hyperparams['use_class_weights'] = True
+        hyperparams['use_class_weights'] = False
         hyperparams['pecl_distance_metric'] = 'softmax'
         hyperparams['n_epochs_max'] = 50
         hyperparams['n_layers_mlp_resnet'] = 1
-        hyperparams['use_lr_scheduler'] = False
+        hyperparams['use_lr_scheduler'] = True
         hyperparams['normalise_embedding'] = 'l2'
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['save_stats'] = True
         hyperparams['stop_early'] = bool_stop_early
-        hyperparams['dataset_name'] = 'satbird-usasummer'
+        hyperparams['dataset_name'] = 's2bms'  #'satbird-usasummer'
         hyperparams['use_mps'] = USE_MPS
         if hyperparams['dataset_name'] == 's2bms':
             filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_s2bms_2024-08-14-1459.pth')
