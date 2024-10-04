@@ -9,7 +9,7 @@ USE_MPS = False
 
 if __name__ == '__main__':
     ## Settings:
-    bool_save_full_model = True
+    bool_save_full_model = False
     bool_stop_early = False
 
     ## Hyperparameters to search over:
@@ -17,7 +17,7 @@ if __name__ == '__main__':
     species_process = ['all']
     lr = [1e-4]
     batch_size = [256] 
-    pecl_knn = [2]
+    pecl_knn = [5]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
     pretrained_resnet = [False]
@@ -25,9 +25,10 @@ if __name__ == '__main__':
     fix_seed = [17]
     alpha_ratio_loss = [0.1]
     freeze_resnet = [False]
-    p_dropout = [0]
+    p_dropout = [0.25]
     n_layers_mlp_pred = [1]
-    temperature = [0.8, 1, 1.5, 2]
+    temperature = [0.2, 0.5]
+    k_bottom = [16, 32, 48, 64]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
@@ -35,7 +36,7 @@ if __name__ == '__main__':
                                   pecl_knn_hard_labels, pred_train_loss, 
                                   pretrained_resnet, fix_seed, alpha_ratio_loss,
                                   freeze_resnet, p_dropout, n_layers_mlp_pred,
-                                  temperature))
+                                  temperature, k_bottom))
     n_combinations = len(iterator)
     print('Combinations will be run in this order:\n---------')
     for i, args in enumerate(iterator):
@@ -62,7 +63,8 @@ if __name__ == '__main__':
             'freeze_resnet': args[11],
             'p_dropout': args[12],
             'n_layers_mlp_pred': args[13],
-            'temperature': args[14]
+            'temperature': args[14],
+            'k_bottom': args[15],
         }
 
         print(f'---- {i_it}/{n_combinations} ----')

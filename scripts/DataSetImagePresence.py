@@ -54,7 +54,8 @@ class DataSetImagePresence(torch.utils.data.Dataset):
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
                  species_process='all', n_bands=4, zscore_im=True,
                  mode='train', use_testing_data=False,
-                 augment_image=True, verbose=1, dataset_name='s2bms'):
+                 augment_image=True, verbose=1, dataset_name='s2bms',
+                 return_indices=False):
         # super(DataSetImagePresence, self).__init__()
         self.image_folder = image_folder
         self.presence_csv = presence_csv
@@ -63,6 +64,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.zscore_im = zscore_im
         self.use_testing_data = use_testing_data
         self.dataset_name = dataset_name
+        self.return_indices = return_indices
         assert self.dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter', 'satbird-usasummer'], f'Dataset name {self.dataset_name} not implemented.'
         if self.zscore_im:
             if self.dataset_name == 's2bms':  ## Values obtained from full data set (1336 images)
@@ -303,6 +305,8 @@ class DataSetImagePresence(torch.utils.data.Dataset):
 
         pres_vec = row[self.species_list]
         pres_vec = torch.tensor(pres_vec.values.astype(np.float32))
+        if self.return_indices:
+            return im, pres_vec, index
         return im, pres_vec
     
     def plot_image(self, index=None, loc_name=None, ax=None, 

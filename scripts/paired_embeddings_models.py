@@ -48,7 +48,7 @@ class ImageEncoder(pl.LightningModule):
                  normalise_embedding='l2', use_mps=True,
                  use_lr_scheduler=False, seed_used=None, 
                  batch_size_used=None, p_dropout=0,
-                 temperature=0.5,
+                 temperature=0.5, k_bottom=32,
                  verbose=1, time_created=None):
         super(ImageEncoder, self).__init__()
         self.save_hyperparameters()
@@ -80,6 +80,7 @@ class ImageEncoder(pl.LightningModule):
         self.use_dropout = p_dropout > 0
         self.p_dropout = p_dropout
         self.temperature = temperature
+        self.k_bottom = k_bottom
         if self.use_dropout:
             print('Using dropout.')
         self.model_name = None
@@ -322,13 +323,23 @@ class ImageEncoder(pl.LightningModule):
             else:
                 flatten_dist = True
             # assert pres_vec.shape[0] >= self.pecl_knn, f'Batch size {pres_vec.shape[0]} must be >= knn {self.pecl_knn}.'   
-            dist_array_ims = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist, temperature=self.temperature)
-            dist_array_pres = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
+            
+            dist_array_pres, full_inner_prod_mat = normalised_softmax_distance_batch(pres_vec, flatten=flatten_dist, knn=self.pecl_knn,
                                                                 knn_hard_labels=self.pecl_knn_hard_labels,
                                                                 temperature=self.temperature,
                                                                 similarity_function='cosine',
                                                                 soft_weights_squared=True,  # only matters if hard labels is False
                                                                 inner_prod_only=True)
+            if self.pecl_knn is not None:
+                with torch.no_grad():
+                    inds_bottom = torch.topk(full_inner_prod_mat, k=self.k_bottom, dim=1, largest=False)[1]
+                    assert inds_bottom.shape == (pres_vec.shape[0], self.k_bottom), (inds_bottom.shape, pres_vec.shape)
+            else:
+                inds_bottom = None
+
+            dist_array_ims, _ = normalised_softmax_distance_batch(im_enc, flatten=flatten_dist, 
+                                                               temperature=self.temperature,
+                                                               inds_bottom_normalise=inds_bottom)
                                                                 
             inds_one = torch.where(dist_array_pres > 0)
             dist_array_pres = dist_array_pres[inds_one]
@@ -405,6 +416,9 @@ class ImageEncoder(pl.LightningModule):
         return loss
                 
     def training_step(self, batch, batch_idx):
+        if len(batch) == 3:
+            im, pres_vec, _ = batch
+            batch = (im, pres_vec)
         loss, _, __ = self.forward_pass(batch)
         self.log(f'train_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)
         self.log('train_loss', loss, on_epoch=True, on_step=False)
@@ -412,6 +426,9 @@ class ImageEncoder(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         with torch.no_grad():
+            if len(batch) == 3:
+                im, pres_vec, _ = batch
+                batch = (im, pres_vec)
             loss, split_loss, im_enc = self.forward_pass(batch)
             self.log(f'val_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)  # saving name loss function used so it can be recovered later
             self.log('val_loss', loss, on_epoch=True, on_step=False)  # also save as val_loss for tensorboard (and lr_scheduler etc)
@@ -449,6 +466,9 @@ class ImageEncoder(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         with torch.no_grad():
+            if len(batch) == 3:
+                im, pres_vec, _ = batch
+                batch = (im, pres_vec)
             loss, split_loss, im_enc = self.forward_pass(batch)
             self.log(f'test_{self.name_train_loss}_loss', loss)  # saving name loss function used so it can be recovered later
             self.log('test_loss', loss)  # also save as test_loss for tensorboard (and lr_scheduler etc)
@@ -685,7 +705,8 @@ def load_stats(folder=None, filename=None, timestamp=None, verbose=1):
 def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_denominator=True,
                                       flatten=True, knn=None, knn_hard_labels=False,
                                       soft_weights_squared=True, suppress_knn_size_warning=True,
-                                      similarity_function='inner', inner_prod_only=False):
+                                      similarity_function='inner', inner_prod_only=False,
+                                      inds_bottom_normalise=None):
     '''Calculate the distance between two embeddings using the normalised softmax distance.'''
     assert temperature > 0, f'Temperature {temperature} should be > 0.'
     assert samples.ndim == 2, f'Expected 2D tensor, but got {samples.ndim}D tensor.'  # (batch, features)
@@ -703,17 +724,35 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
     if inner_prod_only is False:  # convert to softmax distance
         inner_prod_mat = inner_prod_mat / temperature
         inner_prod_mat = torch.exp(inner_prod_mat)
-        sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
-        if exclude_diag_in_denominator:
-            diag = torch.diag(inner_prod_mat)
-            sum_inner_prod_mat = sum_inner_prod_mat - diag
-        sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
-        inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
+        sum_method = 'bottom_k'
+        if sum_method == 'all':
+            sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
+            if exclude_diag_in_denominator:
+                diag = torch.diag(inner_prod_mat)
+                sum_inner_prod_mat = sum_inner_prod_mat - diag
+            sum_inner_prod_mat = sum_inner_prod_mat + 1e-8  # avoid division by zero
+            inner_prod_mat = inner_prod_mat / sum_inner_prod_mat[:, None]
+        elif sum_method == 'bottom_k_self':
+            assert False, 'deprecated'
+            k_bottom_use = min(32, inner_prod_mat.shape[0] - 1)  # avoid self
+            sum_inner_prod_mat = torch.topk(inner_prod_mat, k=k_bottom_use, dim=1, largest=False)[0].sum(1)  ## row wise sum of bottom k
+            sum_inner_prod_mat = sum_inner_prod_mat[:, None] + inner_prod_mat  ## normalise by sum of bottom k and self
+            ## element wise division:
+            inner_prod_mat = inner_prod_mat / sum_inner_prod_mat
+        elif sum_method == 'bottom_k':
+            assert inds_bottom_normalise is not None, 'Expecting inds_bottom_normalise to be set.'
+            assert inds_bottom_normalise.shape[0] == samples.shape[0], (inds_bottom_normalise.shape, samples.shape)
+            sum_bottom_k_mat = torch.stack([inner_prod_mat[i, inds_bottom_normalise[i]].sum() for i in range(samples.shape[0])]) + 1e-8
+            sum_bottom_k_mat = sum_bottom_k_mat[:, None] + inner_prod_mat
+            inner_prod_mat = inner_prod_mat / sum_bottom_k_mat
+        else:
+            raise ValueError(f'Sum method {sum_method} not implemented.')
 
     if knn is not None:
         assert flatten is False, 'Flatten should be False if KNN is used.'
         assert type(knn) == int, f'Expected int for knn, but got {type(knn)}'
         assert knn > 0, f'Expected knn > 0, but got {knn}'
+        copy_inner_prod_mat = inner_prod_mat.clone()
         if knn >= samples.shape[0] - 1:
             if suppress_knn_size_warning is False:
                 print(f'Expected knn < number of samples - 1, but got {knn} and {samples.shape[0]}. This can happen if final batch of data loader happens to be very small. Setting k-1 to batch size for this batch only.')
@@ -730,11 +769,12 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
                     knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols] ** 2
                 else:
                     knn_inner_prod_mat[row, cols] = inner_prod_mat[row, cols]
-        return knn_inner_prod_mat
+        return knn_inner_prod_mat, copy_inner_prod_mat
+    
     if flatten:  # only return upper triangular part because of symmetry
         inds_upper_triu = torch.triu_indices(inner_prod_mat.shape[0], inner_prod_mat.shape[1], offset=1)
         inner_prod_mat = inner_prod_mat[inds_upper_triu[0], inds_upper_triu[1]]
-    return inner_prod_mat
+    return inner_prod_mat, None
     
 def calculate_similarity_batch(samples, distance_metric='cosine'):
     curr_batch_size = len(samples)
@@ -765,6 +805,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                dataset_name='s2bms',
                species_process='all', p_dropout=0, temperature=0.5,
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
+               k_bottom=32,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None, eval_test_set=True,
@@ -823,11 +864,27 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
                               augment_image=True, dataset_name=dataset_name,
-                              n_bands=n_bands, zscore_im=True, mode='train')
+                              n_bands=n_bands, zscore_im=True, mode='train', return_indices=True)
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
-    train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
-                          shuffle=True, persistent_workers=True, #drop_last=True, pin_memory=True
-                          pin_memory=False, prefetch_factor=2)
+    # train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
+    #                       shuffle=True, persistent_workers=True, #drop_last=True, pin_memory=True
+    #                       pin_memory=False, prefetch_factor=2)
+       
+    class LoggingDataLoader(DataLoader):
+        def __iter__(self):
+            self.batch_indices = []
+            for batch in super().__iter__():
+                images, labels, indices = batch  # Unpack the batch
+                self.batch_indices.append(indices)
+                yield images, labels  # Yield only images and labels
+
+        def get_batch_indices(self):
+            return self.batch_indices
+
+    train_dl = LoggingDataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
+                                 shuffle=True, persistent_workers=True, 
+                                 pin_memory=False, prefetch_factor=2)
+
     val_dl = DataLoader(val_ds, batch_size=batch_size, num_workers=n_cpus, 
                         shuffle=False,  persistent_workers=True,
                         pin_memory=False) 
@@ -853,6 +910,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                             training_method=training_method,
                             alpha_ratio_loss=alpha_ratio_loss,
                             p_dropout=p_dropout, temperature=temperature,
+                            k_bottom=k_bottom,
                             time_created=time_created, batch_size_used=batch_size,
                             verbose=verbose, seed_used=fix_seed)
     else:
@@ -886,6 +944,15 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     callbacks = [pl.callbacks.ModelCheckpoint(monitor='val_loss', save_top_k=1, mode='min',
                                             filename="best_checkpoint_val-{epoch:02d}-{val_loss:.2f}-{train_loss:.2f}"),
                  cb_metrics]
+ 
+    # Add a callback to log the indices at the end of each epoch
+    class LoggingCallback(pl.Callback):
+        def on_train_epoch_end(self, trainer, pl_module):
+            indices = train_dl.get_batch_indices()
+            print(f'Epoch {trainer.current_epoch} batch indices: {indices}')
+
+    # Add the LoggingCallback to the list of callbacks
+    # callbacks.append(LoggingCallback())
     if stop_early:
         callbacks.append(pl.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min'))
 
