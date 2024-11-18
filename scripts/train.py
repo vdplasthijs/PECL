@@ -27,8 +27,8 @@ if __name__ == '__main__':
     freeze_resnet = [False]
     p_dropout = [0.25]
     n_layers_mlp_pred = [1]
-    temperature = [0.2, 0.5]
-    k_bottom = [16, 32, 48, 64]
+    temperature = [1]
+    k_bottom = [32]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 

@@ -440,6 +440,17 @@ class ImageEncoder(pl.LightningModule):
                 ratio = loss_pred / loss_pecl
                 self.log(f'val_ratio_pred_pecl', ratio, on_epoch=True, on_step=False)
 
+            ## Evaluate match im_enc and pres
+            sim_im_enc = cosine_sim_self(im_enc)
+            sim_presence = cosine_sim_self(pres_vec)
+            sim_im_enc = sim_im_enc.cpu().detach().numpy()
+            sim_presence = sim_presence.cpu().detach().numpy()
+            ## corr coef and RMSE:
+            corr_coef = np.corrcoef(sim_im_enc, sim_presence)[0, 1]
+            self.log(f'val_sim_corr_coef', corr_coef)
+            rmse = np.sqrt(np.mean((sim_im_enc - sim_presence) ** 2))
+            self.log(f'val_sim_rmse', rmse)
+
             ## Evaluate prediction:
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
             pres_vec = batch[1]
@@ -479,6 +490,17 @@ class ImageEncoder(pl.LightningModule):
                 self.log(f'test_pecl-{self.pecl_distance_metric}_loss', loss_pecl)
                 ratio = loss_pred / loss_pecl
                 self.log(f'test_ratio_pred_pecl', ratio)
+
+            ## Evaluate match im_enc and pres
+            sim_im_enc = cosine_sim_self(im_enc)
+            sim_presence = cosine_sim_self(pres_vec)
+            sim_im_enc = sim_im_enc.cpu().detach().numpy()
+            sim_presence = sim_presence.cpu().detach().numpy()
+            ## corr coef and RMSE:
+            corr_coef = np.corrcoef(sim_im_enc, sim_presence)[0, 1]
+            self.log(f'test_sim_corr_coef', corr_coef)
+            rmse = np.sqrt(np.mean((sim_im_enc - sim_presence) ** 2))
+            self.log(f'test_sim_rmse', rmse)
 
             ## Evaluate prediction:
             pres_pred = self.prediction_model(im_enc)  ## not ideal to do this here, but for now it's fine.
@@ -792,6 +814,14 @@ def calculate_similarity_batch(samples, distance_metric='cosine'):
             else:
                 assert False, f'Distance metric {distance_metric} not implemented.'
     return similarity_array_samples
+
+def cosine_sim_self(a):
+    assert len(a.shape) == 2, a.shape
+    n_samples, n_features = a.shape
+    a_norm = F.normalize(a, p=2, dim=1)
+    sim = torch.mm(a_norm, a_norm.t())
+    assert sim.shape == (n_samples, n_samples)
+    return sim
 
 def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                n_enc_channels=256, 
