@@ -13,21 +13,21 @@ if __name__ == '__main__':
     bool_stop_early = False
 
     ## Hyperparameters to search over:
-    training_method = ['pecl']
+    training_method = ['pred_and_pecl']
     species_process = ['all']
-    lr = [1e-4]
+    lr = [3e-4]
     batch_size = [256] 
-    pecl_knn = [5]
+    pecl_knn = [4]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
     pretrained_resnet = [False]
     n_enc_channels = [256] 
-    fix_seed = [17]
-    alpha_ratio_loss = [0.1]
-    freeze_resnet = [False]
+    fix_seed = [17, 42, 86]
+    alpha_ratio_loss = [0, 0.1, 0.5]
+    freeze_resnet = [True, False]
     p_dropout = [0.25]
     n_layers_mlp_pred = [1]
-    temperature = [1]
+    temperature = [0.5]
     k_bottom = [32]
 
     ## Create all combinations of hyperparameters:
@@ -74,7 +74,7 @@ if __name__ == '__main__':
         ## Constant hyperparameters:
         hyperparams['use_class_weights'] = False
         hyperparams['pecl_distance_metric'] = 'softmax'
-        hyperparams['n_epochs_max'] = 50
+        hyperparams['n_epochs_max'] = 100
         hyperparams['n_layers_mlp_resnet'] = 1
         hyperparams['use_lr_scheduler'] = True
         hyperparams['normalise_embedding'] = 'l2'
