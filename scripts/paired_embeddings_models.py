@@ -748,6 +748,7 @@ def normalised_softmax_distance_batch(samples, temperature=0.5, exclude_diag_in_
         inner_prod_mat = torch.exp(inner_prod_mat)
         sum_method = 'bottom_k'
         if sum_method == 'all':
+            print('WARNING: using all samples for CL normalisation.')
             sum_inner_prod_mat = torch.sum(inner_prod_mat, dim=1)
             if exclude_diag_in_denominator:
                 diag = torch.diag(inner_prod_mat)

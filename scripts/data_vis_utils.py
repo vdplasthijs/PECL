@@ -14,6 +14,8 @@ import torch
 import torch.nn.functional as F
 import paired_embeddings_models as pem
 from DataSetImagePresence import DataSetImagePresence
+import loadpaths_pecl
+path_dict_pecl = loadpaths_pecl.loadpaths()
 from cycler import cycler
 ## Create list with standard colors:
 import seaborn as sns
@@ -24,13 +26,13 @@ for ii, x in enumerate(plt.rcParams['axes.prop_cycle']()):
     if ii > 8:
         break  # after 8 it repeats (for ever)
 
-sys.path.append('/Users/t.vanderplas/repos/reproducible_figures/scripts/')
+sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
 import rep_fig_vis as rfv
 rfv.set_fontsize(10)
 import loadpaths_pecl
 path_dict_pecl = loadpaths_pecl.loadpaths()
 
-fig_folder = '/Users/t.vanderplas/repos/PECL/figures/'
+fig_folder = os.path.join(path_dict_pecl['repo'], 'figures/')
 
 def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
                            ax_hist_species_log=None, ax_map=None, path_map=None,
@@ -225,8 +227,8 @@ def get_mean_rates_results(use_precomputed=True, train_test_filepath='../../cont
                         'top_10': [0.6731182336807251],
                         'top_20': [0.8432795405387878]}
     else:
-        ds = DataSetImagePresence(image_folder='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/',
-                              presence_csv='/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv',
+        ds = DataSetImagePresence(image_folder=path_dict_pecl['s2bms_images'],
+                              presence_csv=path_dict_pecl['s2bms_presence'],
                               species_process='all',
                               zscore_im=True, 
                               augment_image=True, mode='val')
@@ -481,6 +483,12 @@ def create_printable_table(df, hparams_use, metrics_use, split_use='test',
             n_decimals = 1
         else:    
             max_val = df_num_val[m].loc[:, ('mean')].max()
+            if np.isnan(max_val):
+                n_nans = df_num_val[m].loc[:, ('mean')].isna().sum()
+                assert False, f'Column {m} has NaN values'
+                print(f'Column {m} has NaN values')
+                max_val = np.nanmax(df_num_val[m].loc[:, ('mean')].values)
+                print(max_val, m)
             ## scale so that first digit is before decimal point
             scale = 10 ** -(int(np.log10(max_val)) - 1)
             n_decimals = 2
@@ -855,3 +863,20 @@ def print_table_results_per_species(ds, filepath_train_val_split, save_table=Fal
                 caption=caption_tex, label=label_tex, position=position_tex)
 
     return df_overview
+
+def print_table_kbottom(split_use='test'):
+    list_vnums = list(np.arange(221, 438))
+    list_vnums.remove(372)  # broken run
+
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=list_vnums, path_stats='/home/tplas/models/PECL/stats'), split_use=split_use)
+
+    caption = 'Mean and SEM of validation metrics for different hyperparameters. ' \
+              'The best performing model for each metric is highlighted in bold.'
+    
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                            save_table=True, filename='tab_tmp.tex', highlight_best_row=True,
+                           split_use=split_use,
+                           sort_ascending=True, sort_by_col='MSE',
+                            label_tex='tab:tmp', caption_tex=caption)
+    return (df_num_val, df_tex)

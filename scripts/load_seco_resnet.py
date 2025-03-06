@@ -16,7 +16,7 @@ def load_seco_resnet(seco_ckpt_path=path_dict_pecl['seco_resnet18_1m'],
     seco_sd: dict, state dict of SECO checkpoint
     '''
     
-    assert os.path.exists(seco_ckpt_path)
+    assert os.path.exists(seco_ckpt_path), seco_ckpt_path
 
     with pl_legacy_patch():
         seco_sd = torch.load(seco_ckpt_path, 
