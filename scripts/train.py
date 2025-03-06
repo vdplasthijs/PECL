@@ -17,18 +17,18 @@ if __name__ == '__main__':
     species_process = ['all']
     lr = [3e-4]
     batch_size = [256] 
-    pecl_knn = [4]
+    pecl_knn = [2, 4]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
-    pretrained_resnet = [False]
+    pretrained_resnet = ['imagenet']
     n_enc_channels = [256] 
     fix_seed = [17, 42, 86]
-    alpha_ratio_loss = [0, 0.1, 0.5]
+    alpha_ratio_loss = [0.1, 0.2, 0.5]
     freeze_resnet = [True, False]
     p_dropout = [0.25]
-    n_layers_mlp_pred = [1]
-    temperature = [0.5]
-    k_bottom = [32]
+    n_layers_mlp_pred = [3]
+    temperature = [0.2, 0.5, 0.7]
+    k_bottom = [16, 32]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
@@ -94,8 +94,8 @@ if __name__ == '__main__':
         else:
             raise ValueError(f'dataset_name {hyperparams["dataset_name"]} not recognised')
 
-        # if i_it <= 15:
-        #     continue
+        if i_it <= 151:
+            continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
         list_vnums.append(tmp_model.v_num)
