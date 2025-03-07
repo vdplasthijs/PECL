@@ -310,7 +310,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         return im, pres_vec
     
     def plot_image(self, index=None, loc_name=None, ax=None, 
-                   plot_species_bar=True):
+                   plot_species_bar=True, use_mps=False):
         if loc_name is not None and index is None:
             if loc_name in self.df_presence['name_loc'].values:
                 index = self.df_presence[self.df_presence['name_loc'] == loc_name].index[0]
@@ -333,6 +333,9 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         else:
             assert False, f'Number of bands {len(im)} not implemented.'
         im = im.numpy()
+        if not use_mps:
+            ### swap 1st and 3rd bands for RGB
+            im = im[[2, 1, 0], :, :]
 
         if ax is None:
             ax = plt.subplot(111)

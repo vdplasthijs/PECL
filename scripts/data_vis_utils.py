@@ -7,6 +7,8 @@ import pandas as pd
 import geopandas as gpd
 import rasterio
 import rasterio.features
+import rioxarray as rxr
+import xarray as xr
 import shapely.geometry
 import matplotlib.pyplot as plt
 import matplotlib
@@ -77,7 +79,8 @@ def plot_stats_df_presence(ds, ax_hist_visits=None, ax_hist_species=None,
 
     if path_map is None:
         ## https://www.diva-gis.org/gdata
-        path_map = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/GBR_adm/GBR_adm0.shp'
+        path_map = '/home/tplas/data/gis/GBR_adm/GBR_adm0.shp'
+        # path_map = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/data/GBR_adm/GBR_adm0.shp'
     gdf_uk = gpd.read_file(path_map)
     gdf_uk.plot(ax=ax_map, color='k', alpha=0.5)
     # print(gdf_uk.crs)
@@ -168,6 +171,77 @@ def dataset_fig(ds, all_labels=None, save_fig=False,
 
     if save_fig:
         plt.savefig(os.path.join(fig_folder, 'dataset_overview.pdf'), dpi=300, bbox_inches='tight')
+
+def dataset_fig_with_corr(ds, all_labels=None, save_fig=False,
+                title_examples=True,
+                example_inds=[126, 1000, 167, 370, 457, 635, 34, 345, 2, 314]):
+    assert len(example_inds) == 10, f'Expected 10 examples, got {len(example_inds)}'
+    # example_inds = np.sort(example_inds)
+    n_examples = len(example_inds)
+
+    labels_examples = all_labels[example_inds]
+    assert labels_examples.shape == (n_examples, all_labels.shape[1])
+    inner_prod = pem.cosine_sim_self(torch.tensor(labels_examples)).numpy()
+
+    n_plots_top = 5
+    fig = plt.figure(figsize=(10, 6.5))
+    gs_map = fig.add_gridspec(1, 1, wspace=0.5, hspace=0.5, top=1, bottom=0.65, left=0.02, right=0.14)
+    gs_top = fig.add_gridspec(1, n_plots_top - 1, wspace=0.5, hspace=0.5, top=0.95, bottom=0.73, left=0.2, right=0.98)
+    gs_middle = fig.add_gridspec(1, 6, wspace=0.1, hspace=0.5, top=0.59, bottom=0.32, left=0.02, right=0.97)
+    gs_bottom = fig.add_gridspec(1, 4, wspace=0.1, hspace=0.5, top=0.25, bottom=0.02, left=0.02, right=0.65)
+    gs_bottomright = fig.add_gridspec(1, 1, wspace=0.1, hspace=0.5, top=0.25, bottom=0.02, left=0.78, right=0.925)
+
+    ax_top = [fig.add_subplot(gs_map[0])] + [fig.add_subplot(gs_top[i]) for i in range(n_plots_top - 1)]
+    ax_indiv = [fig.add_subplot(gs_middle[i]) for i in range(6)] + [fig.add_subplot(gs_bottom[i]) for i in range(4)]
+
+    plot_stats_df_presence(ds, ax_hist_visits=ax_top[1], ax_hist_species=ax_top[2],
+                            ax_hist_species_log=ax_top[3], ax_map=ax_top[0])
+    if all_labels is not None:
+        ax_ = ax_top[4]
+        _ = plot_distr_label_inner_prod(all_labels, ax=ax_)
+
+    
+    for i, ind in enumerate(example_inds):
+        ax_ = ax_indiv[i]
+        ax_, species_ax = ds.plot_image(ind, ax=ax_)   
+        if title_examples:
+            ax_.set_title(f'Location #{i}')
+        else:
+            ax_.set_title('')
+        ax_.axis('off')
+
+    for ax_ in [ax_indiv[5], ax_indiv[9]]:
+        ax_.annotate('P(presence)', xy=(1.15, 0.5), xycoords='axes fraction', 
+                    va='center', ha='center',
+                    rotation=90)
+    
+    ## cosine sim mat:
+    ax_cos = fig.add_subplot(gs_bottomright[0])
+    assert inner_prod.shape == (n_examples, n_examples)
+    hm = ax_cos.imshow(inner_prod, cmap='Blues')
+    ax_cos.set_xticks(np.arange(n_examples))
+    ax_cos.set_yticks(np.arange(n_examples))
+    ticklabels = [f'#{i}' for i, ind in enumerate(example_inds)]
+    ax_cos.xaxis.set_ticks_position('top')
+    ax_cos.set_xticklabels(ticklabels, rotation=90)
+    ax_cos.set_yticklabels(ticklabels)
+    ax_cos.xaxis.set_label_position('top')
+    # ax_cos.set_xlabel('Example')
+    # ax_cos.set_ylabel('Example')
+    cbar = fig.colorbar(hm, ax=ax_cos, fraction=0.046, pad=0.04)
+    cbar.set_label('cosine similarity\nspecies presence')
+
+    plt.draw()
+    rfv.add_panel_label(ax_top[0], label_letter='a', fontsize=14, x_offset=0.2, y_offset=-0.1)
+    rfv.add_panel_label(ax_top[1], label_letter='b', fontsize=14)
+    rfv.add_panel_label(ax_top[2], label_letter='c', fontsize=14)
+    rfv.add_panel_label(ax_top[4], label_letter='d', fontsize=14)
+    rfv.add_panel_label(ax_indiv[0], label_letter='e', fontsize=14, x_offset=0.2)
+    rfv.add_panel_label(ax_cos, label_letter='f', fontsize=14, x_offset=0, y_offset=0.1)
+
+    if save_fig:
+        plt.savefig(os.path.join(fig_folder, 'dataset_overview_v2.pdf'), dpi=300, bbox_inches='tight')
+
 
 def plot_distr_label_inner_prod(all_labels, ax=None, save_fig=False):
     assert type(all_labels) == np.ndarray, f'Expected numpy array, got {type(all_labels)}'
@@ -904,3 +978,53 @@ def print_table_random_kbottom(split_use='test'):
                            sort_ascending=True, sort_by_col='MSE',
                             label_tex='tab:tmp', caption_tex=caption)
     return (df_num_val, df_tex)
+
+def load_tiff(tiff_file_path, datatype='np', verbose=0):
+    '''Load tiff file as np or da'''
+    with rasterio.open(tiff_file_path) as f:
+        if verbose > 0:
+            print(f.profile)
+        if datatype == 'np':  # handle different file types 
+            im = f.read()
+            assert type(im) == np.ndarray
+        elif datatype == 'da':
+            im = rxr.open_rasterio(f)
+            assert type(im) == xr.DataArray
+        else:
+            assert False, 'datatype should be np or da'
+
+    return im 
+
+## Plotting images:
+def naked(ax):
+    '''Remove all spines, ticks and labels'''
+    for ax_name in ['top', 'bottom', 'right', 'left']:
+        ax.spines[ax_name].set_visible(False)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+
+def plot_image_simple(im, ax=None, name_file=None, use_im_extent=False, verbose=0):
+    '''Plot image (as np array or xr DataArray)'''
+    if ax is None:
+        ax = plt.subplot(111)
+    if type(im) == xr.DataArray:
+        plot_im = im.to_numpy()
+    else:
+        plot_im = im
+    if verbose > 0:
+        print(plot_im.shape, type(plot_im))
+    if use_im_extent:
+        extent = [im.x.min(), im.x.max(), im.y.min(), im.y.max()]
+    else:
+        extent = None
+    rasterio.plot.show(plot_im, ax=ax, cmap='viridis', 
+                       extent=extent)
+    naked(ax)
+    ax.set_aspect('equal')
+    if name_file is None:
+        pass 
+    else:
+        name_tile = name_file.split('/')[-1].rstrip('.tif')
+        ax.set_title(name_tile)
