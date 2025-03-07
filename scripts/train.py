@@ -83,19 +83,9 @@ if __name__ == '__main__':
         hyperparams['stop_early'] = bool_stop_early
         hyperparams['dataset_name'] = 's2bms'  #'satbird-usasummer'
         hyperparams['use_mps'] = USE_MPS
-        if hyperparams['dataset_name'] == 's2bms':
-            filepath_train_val_split = os.path.join(path_dict_pecl['repo'], 'content/split_indices_s2bms_2024-08-14-1459.pth')
-        elif hyperparams['dataset_name'] == 'satbird-kenya':
-            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_Kenya_2024-08-14-1506.pth')
-        elif hyperparams['dataset_name'] == 'satbird-usawinter':
-            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_winter_2024-08-14-1506.pth')
-        elif hyperparams['dataset_name'] == 'satbird-usasummer':
-            filepath_train_val_split = os.path.join(path_dict_pecl['repo'],'content/split_indices_USA_summer_2024-09-19-1420.pth')
-        else:
-            raise ValueError(f'dataset_name {hyperparams["dataset_name"]} not recognised')
 
-        if i_it <= 151:
-            continue
+        # if i_it <= 151:
+        #     continue
 
         tmp_model, _ = pem.train_pecl(**hyperparams)
         list_vnums.append(tmp_model.v_num)

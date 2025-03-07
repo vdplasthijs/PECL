@@ -5,22 +5,27 @@ import paired_embeddings_models as pem
 import loadpaths_pecl
 import numpy as np
 path_dict_pecl = loadpaths_pecl.loadpaths()
+USE_MPS = False
 
 def sample_random_hparams():
     ## Hyperparameters to search over:
-    lr = float(10 ** np.random.uniform(-5, -2))
-    batch_size = int(np.random.choice([8, 16, 32, 64]))
-    upper_lim_knn = np.minimum(10, batch_size - 1)
-    pecl_knn = int(np.random.randint(1, upper_lim_knn + 1))
-    alpha_ratio_loss = float(10 ** np.random.uniform(-1.5, 0))
-    temperature = float(np.random.uniform(0.1, 1))
+    lr = float(10 ** np.random.uniform(-4, -3))
+    batch_size = int(np.random.choice([256]))
+    # upper_lim_knn = np.minimum(5, batch_size - 1)
+    pecl_knn = int(np.random.randint(1, 10))
+    alpha_ratio_loss = float(10 ** np.random.uniform(-1.5, -0.5))
+    temperature = float(np.random.uniform(0.5, 1))
+    p_dropout = float(np.random.choice([0, 0.25, 0.5]))
+    k_bottom = int(np.random.choice([16, 32, 64]))
     
     hyperparams = {
             'lr': lr,
             'batch_size': batch_size,
             'pecl_knn': pecl_knn,
             'alpha_ratio_loss': alpha_ratio_loss,
-            'temperature': temperature
+            'temperature': temperature,
+            'p_dropout': p_dropout,
+            'k_bottom': k_bottom
         }
     
     list_variables = list(hyperparams.keys())
@@ -30,29 +35,27 @@ def sample_random_hparams():
     hyperparams['species_process'] = 'all'
     hyperparams['n_enc_channels'] = 256 
     hyperparams['n_layers_mlp_pred'] = 3
-    hyperparams['p_dropout'] = 0
     hyperparams['pred_train_loss'] = 'bce'
-    hyperparams['pretrained_resnet'] = 'seco'
+    hyperparams['pretrained_resnet'] = 'imagenet'
     hyperparams['pecl_knn_hard_labels'] = False
     hyperparams['training_method'] = 'pred_and_pecl'
-    hyperparams['use_class_weights'] = True
+    hyperparams['use_class_weights'] = False
     hyperparams['pecl_distance_metric'] = 'softmax'
     hyperparams['n_epochs_max'] = 50
     hyperparams['n_layers_mlp_resnet'] = 1
     hyperparams['use_lr_scheduler'] = False
     hyperparams['normalise_embedding'] = 'l2'
     hyperparams['save_stats'] = True
-    hyperparams['filepath_train_val_split'] = os.path.join(path_dict_pecl['repo'], 'content/split_indices_2024-03-04-1831.pth')
 
     return hyperparams, list_variables
 
 if __name__ == '__main__':
     ## Settings:
-    bool_save_full_model = True
+    bool_save_full_model = False
     bool_stop_early = True
     list_seeds_model = [42, 17, 86]
-    n_combinations = 2
-    eval_test_set = False
+    n_combinations = 100
+    eval_test_set = True
     
     ## Create all combinations of hyperparameters:
     print('Combinations will be run in this order:\n---------')
@@ -75,9 +78,10 @@ if __name__ == '__main__':
 
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['stop_early'] = bool_stop_early
-        hyperparams['tb_log_folder'] = '/Users/t.vanderplas/Library/CloudStorage/OneDrive-TheAlanTuringInstitute/models/PECL/random_search/'
+        hyperparams['tb_log_folder'] = os.path.join(path_dict_pecl['model_folder'], 'random_search/')
         hyperparams['eval_test_set'] = eval_test_set
         hyperparams['dataset_name'] = 's2bms'
+        hyperparams['use_mps'] = USE_MPS
     
         for seed in list_seeds_model:
             print(f'---- {i_it + 1}/{n_runs} (seed {seed}) ----')

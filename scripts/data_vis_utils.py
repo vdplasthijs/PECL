@@ -783,12 +783,19 @@ def print_table_cr_32(save_table=False, split_use='test'):
     return (df_num_val, df_tex)
 
 
-def print_table_randomsearch(save_table=False, split_use='test', folder='/Users/t.vanderplas/models/PECL/random_search/stats/'):
+def print_table_randomsearch(save_table=False, split_use='test', 
+                             folder='/Users/t.vanderplas/models/PECL/random_search/stats/',
+                             vnum_min=None, vnum_max=None):
     contents_folder = [x for x in os.listdir(folder) if x.endswith('.pkl')]
     list_vnums = [int(x.split('_')[2].lstrip('vnum-')) for x in contents_folder]
+    if vnum_min is not None:
+        list_vnums = [x for x in list_vnums if x >= vnum_min]
+    if vnum_max is not None:
+        list_vnums = [x for x in list_vnums if x <= vnum_max]
+                      
     list_vnums = sorted(list_vnums)
     print(list_vnums)
-    assert len(list_vnums) == len(contents_folder), f'Expected {len(contents_folder)} vnums, got {len(list_vnums)}'
+    # assert len(list_vnums) == len(contents_folder), f'Expected {len(contents_folder)} vnums, got {len(list_vnums)}'
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums, path_stats=folder), split_use=split_use, folder=folder)
     return (tmp_df, tmp_details)
@@ -871,6 +878,23 @@ def print_table_kbottom(split_use='test'):
     tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
         list_vnums=list_vnums, path_stats='/home/tplas/models/PECL/stats'), split_use=split_use)
 
+    caption = 'Mean and SEM of validation metrics for different hyperparameters. ' \
+              'The best performing model for each metric is highlighted in bold.'
+    
+    df_num_val, df_tex = create_printable_table(df=tmp_df, hparams_use=tmp_details[1], metrics_use=tmp_details[2],
+                            save_table=True, filename='tab_tmp.tex', highlight_best_row=True,
+                           split_use=split_use,
+                           sort_ascending=True, sort_by_col='MSE',
+                            label_tex='tab:tmp', caption_tex=caption)
+    return (df_num_val, df_tex)
+
+def print_table_random_kbottom(split_use='test'):
+    list_vnums = list(np.arange(2, 32))
+
+    tmp_df, tmp_details = create_df_list_timestamps(list_ts=get_list_timestamps_from_vnums(
+        list_vnums=list_vnums, path_stats='/home/tplas/models/PECL/random_search/stats'), 
+        split_use=split_use, folder='/home/tplas/models/PECL/random_search/stats/')
+    return (tmp_df, tmp_details)
     caption = 'Mean and SEM of validation metrics for different hyperparameters. ' \
               'The best performing model for each metric is highlighted in bold.'
     
