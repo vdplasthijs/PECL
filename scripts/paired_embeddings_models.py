@@ -683,7 +683,7 @@ def load_model(folder=os.path.join(path_dict_pecl['model_folder'], 'full_models/
 
     return model 
 
-def load_model_from_ckpt(v_num=None, filepath=None, 
+def load_model_from_ckpt(v_num=None, filepath=None, use_mps=False, device='cpu',
                          base_folder=os.path.join(path_dict_pecl['model_folder'], 'lightning_logs/')):
     '''Load model from checkpoint file.'''
     assert filepath is not None or v_num is not None, 'Version number and filepath not provided.'
