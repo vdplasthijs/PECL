@@ -6,8 +6,8 @@
       "model_folder": "TMP_DEFAULT",
       "data_folder": "",
       "ukbms_full_dataset": "",
-      "s2bms_images": "TMP_DEFAULT",
-      "s2bms_presence": "TMP_DEFAULT",
+      "s2bms_images": "YOUR_DATA_FOLDER/S2BMS/sentinel2_satellite-images/y-2018-2019_m-06-09/",
+      "s2bms_presence": "YOUR_DATA_FOLDER/S2BMS/ukbms_species-presence/bms_presence_y-2018-2019_th-200.csv",
       "seco_resnet50_1m": "",
       "seco_resnet18_1m": ""
         
@@ -34,21 +34,21 @@
     },
   "tplas": 
     {"paths": {
-      "home": "/home/tplas/",
-      "repo": "/home/tplas/repos/PECL/",
-      "model_folder": "/home/tplas/models/PECL/",
-      "data_folder": "/media/data-hdd/UKBMS_sent2_ds/",
+      "home": "/Users/tplas/",
+      "repo": "/Users/tplas/repos/PECL/",
+      "model_folder": "/Users/tplas/models/PECL/",
+      "data_folder": "TMP",
       "ukbms_full_dataset": "",
-      "s2bms_images": "/media/data-hdd/UKBMS_sent2_ds/sent2-4band/mix-2018-2019/m-06-09/",
-      "s2bms_presence": "/media/data-hdd/UKBMS_sent2_ds/bms_presence/bms_presence_y-2018-2019_th-200.csv",
+      "s2bms_images": "/Users/tplas/data/S2BMS/sentinel2_satellite-images/y-2018-2019_m-06-09/",
+      "s2bms_presence": "/Users/tplas/data/S2BMS/ukbms_species-presence/bms_presence_y-2018-2019_th-200.csv",
       "satbird-kenya_images": "/media/data-hdd/satbird/Kenya/images/",
       "satbird-kenya_presence": "/media/data-hdd/satbird/Kenya/df_satbird-kenya_presence.csv",
       "satbird-usawinter_images": "",
       "satbird-usawinter_presence": "",
       "satbird-usasummer_images": "/media/data-hdd/satbird/USA_summer/images/",
       "satbird-usasummer_presence": "/media/data-hdd/satbird/USA_summer/df_satbird-usasummer_presence.csv",
-      "seco_resnet50_1m": "/home/tplas/data/seco/seco_resnet50_1m.ckpt",
-      "seco_resnet18_1m": "/home/tplas/data/seco/seco_resnet18_1m.ckpt"
+      "seco_resnet50_1m": "",
+      "seco_resnet18_1m": ""
               }
     },
   "runner_Linux":

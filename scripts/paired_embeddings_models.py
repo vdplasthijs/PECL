@@ -429,6 +429,10 @@ class ImageEncoder(pl.LightningModule):
             if len(batch) == 3:
                 im, pres_vec, _ = batch
                 batch = (im, pres_vec)
+            elif len(batch) == 2:
+                im, pres_vec = batch
+            else:
+                assert False, f'Batch length {len(batch)} not 2 or 3.'
             loss, split_loss, im_enc = self.forward_pass(batch)
             self.log(f'val_{self.name_train_loss}_loss', loss, on_epoch=True, on_step=False)  # saving name loss function used so it can be recovered later
             self.log('val_loss', loss, on_epoch=True, on_step=False)  # also save as val_loss for tensorboard (and lr_scheduler etc)
@@ -480,6 +484,10 @@ class ImageEncoder(pl.LightningModule):
             if len(batch) == 3:
                 im, pres_vec, _ = batch
                 batch = (im, pres_vec)
+            elif len(batch) == 2:
+                im, pres_vec = batch
+            else:
+                assert False, f'Batch length {len(batch)} not 2 or 3.'
             loss, split_loss, im_enc = self.forward_pass(batch)
             self.log(f'test_{self.name_train_loss}_loss', loss)  # saving name loss function used so it can be recovered later
             self.log('test_loss', loss)  # also save as test_loss for tensorboard (and lr_scheduler etc)
