@@ -26,7 +26,8 @@ def create_model(create_ds, request):
                             alpha_ratio_loss=0.5,
                             p_dropout=0, temperature=0.5,
                             time_created=None, 
-                            batch_size_used=4 if use_mock else 64,
+                            batch_size_used=8 if use_mock else 64,
+                            k_bottom=2 if use_mock else 32,
                             verbose=1, seed_used=0)
     return model
 
