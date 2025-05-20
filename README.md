@@ -1,3 +1,11 @@
+[![arXiv](https://img.shields.io/badge/arXiv-2505.09306-b31b1b.svg)](https://arxiv.org/abs/2505.09306)
+[![Dataset](https://img.shields.io/badge/dataset-available-4b44ce)](https://zenodo.org/records/15198884)
+[![CI](https://github.com/vdplasthijs/PECL/actions/workflows/python-app.yml/badge.svg)](https://github.com/vdplasthijs/PECL/actions/workflows/python-app.yml)
+![Issues](https://img.shields.io/github/issues/vdplasthijs/PECL)
+![Python](https://img.shields.io/badge/python-3.10+-blue)
+![PyTorch](https://img.shields.io/badge/framework-PyTorch-red)
+[![License](https://img.shields.io/github/license/vdplasthijs/PECL.svg)](LICENSE)
+
 # Predicting butterfly species presence from satellite imagery using soft contrastive regularisation
 
 This repository contains all code of our [2025 CVPR FGVC paper](https://arxiv.org/abs/2505.09306), including:
