@@ -8,7 +8,7 @@
 
 # Predicting butterfly species presence from satellite imagery using soft contrastive regularisation
 
-This repository contains all code of our [2025 CVPR FGVC paper](https://arxiv.org/abs/2505.09306), including:
+This repository contains all code of our [2025 CVPR FGVC paper](https://openaccess.thecvf.com/content/CVPR2025W/FGVC/html/Van_der_Plas_Predicting_butterfly_species_presence_from_satellite_imagery_using_soft_contrastive_CVPRW_2025_paper.html), including:
 - PECL (_Paired Embeddings Contrastive Loss_) implementation in `scripts/paired_embeddings_models.py`.
 - Torch dataloader for the [S2BMS dataset](https://zenodo.org/records/15198884) in `scripts/DataSetImagePresence.py`
 - Resnet-based model to predict species presence vectors from satellite images, using PECL.
