@@ -13,22 +13,22 @@ if __name__ == '__main__':
     bool_stop_early = False
 
     ## Hyperparameters to search over:
-    training_method = ['pred_and_pecl']
+    training_method = ['pred_incl_enc']
     species_process = ['all']
-    lr = [3e-4]
+    lr = [1e-3]
     batch_size = [256] 
-    pecl_knn = [2, 4]
+    pecl_knn = [2]
     pecl_knn_hard_labels = [False]
     pred_train_loss = ['bce']
-    pretrained_resnet = ['imagenet']
+    pretrained_resnet = [False]
     n_enc_channels = [256] 
     fix_seed = [17, 42, 86]
-    alpha_ratio_loss = [0.1, 0.2, 0.5]
-    freeze_resnet = [True, False]
+    alpha_ratio_loss = [0.0]
+    freeze_resnet = [False]
     p_dropout = [0.25]
     n_layers_mlp_pred = [3]
-    temperature = [0.2, 0.5, 0.7]
-    k_bottom = [16, 32]
+    temperature = [0.2]
+    k_bottom = [16]
 
     ## Create all combinations of hyperparameters:
     iterator = list(itertools.product(training_method, species_process, 
@@ -80,9 +80,14 @@ if __name__ == '__main__':
         hyperparams['normalise_embedding'] = 'l2'
         hyperparams['save_model'] = bool_save_full_model
         hyperparams['save_stats'] = True
+        hyperparams['eval_test_set'] = True
         hyperparams['stop_early'] = bool_stop_early
+        hyperparams['zscore_im'] = False
         hyperparams['dataset_name'] = 's2bms'  #'satbird-usasummer'
         hyperparams['use_mps'] = USE_MPS
+        hyperparams['image_folder'] = '/Users/tplas/data/s2bms_butterfly_alphaearth_256/'
+        hyperparams['n_bands'] = 64
+        hyperparams['eo_data'] = 'alphaearth'
 
         # if i_it <= 151:
         #     continue

@@ -55,7 +55,7 @@ class ImageEncoder(pl.LightningModule):
         self.n_species = n_species
         self.n_enc_channels = n_enc_channels
         self.n_bands = n_bands
-        assert self.n_bands in [3, 4], f'Number of bands {self.n_bands} not implemented.'
+        assert self.n_bands in [3, 4, 6, 64], f'Number of bands {self.n_bands} not implemented.'
         self.verbose = verbose
         self.seed_used = seed_used  # Save seed used in training function
         self.batch_size_used = batch_size_used  ## only saved for reference, not required
@@ -146,6 +146,7 @@ class ImageEncoder(pl.LightningModule):
             self.forward_pass = self.pred_pass
             self.pred_train_loss = pred_train_loss
             self.name_train_loss = f'pred-{pred_train_loss}'
+            assert self.freeze_resnet, 'Expected freeze_resnet to be True for training method pred.'
             self.freeze_resnet_layers(freeze_all_but_last=True,
                                       freeze_last=True)
             self.freeze_prediction_model(freeze=False)
@@ -195,6 +196,18 @@ class ImageEncoder(pl.LightningModule):
             with torch.no_grad():
                 self.resnet.conv1.weight[:, :3] = weight
                 self.resnet.conv1.weight[:, 3] = weight[:, 0]
+        elif self.n_bands == 6:
+            weight = self.resnet.conv1.weight.clone()  # copy the weights from the first layer
+            self.resnet.conv1 = nn.Conv2d(6, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)  # change the first layer to accept 6 channels
+            with torch.no_grad():
+                for i in range(6):
+                    self.resnet.conv1.weight[:, i] = weight[:, i % 3]
+        elif self.n_bands == 64:
+            weight = self.resnet.conv1.weight.clone()  # copy the weights from the first layer
+            self.resnet.conv1 = nn.Conv2d(64, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)  # change the first layer to accept 64 channels
+            with torch.no_grad():
+                for i in range(64):
+                    self.resnet.conv1.weight[:, i] = weight[:, i % 3]
         else:
             assert False, f'Number of bands {self.n_bands} not implemented.'
 
@@ -299,7 +312,8 @@ class ImageEncoder(pl.LightningModule):
         if self.normalise_embedding == 'l2':
             pres_vec = F.normalize(pres_vec, p=2, dim=1)
             ## im_enc is already normalized in forward()
-
+        elif self.normalise_embedding:
+            assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
         '''
         Maybe this should be split up.. Forward() should do the im_enc & pred.
         If pred not needed, forward() just doesnt do it and returns None. 
@@ -370,6 +384,10 @@ class ImageEncoder(pl.LightningModule):
         # Forward pass
         if self.train_im_enc_during_pred:
             im_enc = self.forward(im)
+            # assert len(im.shape) == 4, f'Image batch shape {im.shape} not 4D.'
+            # assert im.shape[-1] == self.n_bands, f'Image batch last dim {im.shape[-1]} does not match n_bands {self.n_bands}.'
+            # ## average across dims 1 and 2 (spatial dims)
+            # im_enc = im
         else:
             with torch.no_grad():  # Don't train encoding model here. 
                 im_enc = self.forward(im)
@@ -385,7 +403,7 @@ class ImageEncoder(pl.LightningModule):
         im_enc = self.forward(im)
         if self.normalise_embedding == 'l2':
             pres_vec_pecl = F.normalize(pres_vec, p=2, dim=1)
-        else:
+        elif self.normalise_embedding:
             assert False, f'Normalisation method {self.normalise_embedding} not implemented.'
 
         pres_pred = self.prediction_model(im_enc)
@@ -844,7 +862,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
                dataset_name='s2bms',
                species_process='all', p_dropout=0, temperature=0.5,
                pecl_knn=5, pecl_knn_hard_labels=False, alpha_ratio_loss=0.01,
-               k_bottom=32,
+               k_bottom=32, zscore_im=True, eo_data=None,
                use_lr_scheduler=False, stop_early=False,
                verbose=1, fix_seed=42, use_mps=True,
                filepath_train_val_split=None, eval_test_set=True,
@@ -885,7 +903,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
         assert torch.backends.mps.is_built()
         tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
         n_cpus = 8
-        acc_use = 'gpu'
+        acc_use = 'mps'
         # acc_use = 'cpu' 
     else:
         assert torch.cuda.is_available(), 'No GPU available.'
@@ -902,8 +920,8 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              augment_image=True, dataset_name=dataset_name,
-                              n_bands=n_bands, zscore_im=True, mode='train', return_indices=True)
+                              augment_image=True, dataset_name=dataset_name, eo_data=eo_data,
+                              n_bands=n_bands, zscore_im=zscore_im, mode='train', return_indices=True)
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
     # train_dl = DataLoader(train_ds, batch_size=batch_size, num_workers=n_cpus, 
     #                       shuffle=True, persistent_workers=True, #drop_last=True, pin_memory=True
@@ -995,7 +1013,7 @@ def train_pecl(model=None, freeze_resnet_fc_loaded_model=False,
     if stop_early:
         callbacks.append(pl.callbacks.EarlyStopping(monitor='val_loss', patience=10, mode='min'))
 
-    trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use,
+    trainer = pl.Trainer(max_epochs=n_epochs_max, accelerator=acc_use, devices=1,
                          log_every_n_steps=5,  # train loss logging steps (each step = 1 batch)
                          reload_dataloaders_every_n_epochs=1, # reload such that train_dl re-shuffles.  https://github.com/Lightning-AI/pytorch-lightning/discussions/7332
                          callbacks=callbacks, logger=tb_logger)
@@ -1024,7 +1042,7 @@ def test_model(model=None, model_path=None, use_mps=True,
                 image_folder=None, presence_csv=None,
                fix_seed=None, species_process='all',
                save_stats=True, save_model=True,
-               dataset_name='s2bms',
+               dataset_name='s2bms', eo_data=None,
                tb_log_folder=path_dict_pecl['model_folder']):
     assert model is not None or model_path is not None, 'Provide either model or model_path.'
     assert not (model is not None and model_path is not None), 'Provide either model or model_path, not both.'
@@ -1059,7 +1077,7 @@ def test_model(model=None, model_path=None, use_mps=True,
         assert torch.backends.mps.is_built()
         tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
         n_cpus = 8
-        acc_use = 'gpu'
+        acc_use = 'mps'
     else:
         assert torch.cuda.is_available(), 'No GPU available.'
         tb_logger = pl_loggers.TensorBoardLogger(save_dir=tb_log_folder)
@@ -1068,7 +1086,7 @@ def test_model(model=None, model_path=None, use_mps=True,
 
     ds = DataSetImagePresence(image_folder=image_folder, presence_csv=presence_csv,
                               shuffle_order_data=True, species_process=species_process,
-                              augment_image=True, dataset_name=dataset_name,
+                              augment_image=True, dataset_name=dataset_name, eo_data=eo_data,
                               n_bands=model.n_bands, zscore_im=True, mode='train')
     train_ds, val_ds, test_ds = ds.split_into_train_val(filepath=filepath_train_val_split)
 

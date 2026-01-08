@@ -21,10 +21,10 @@ import create_dataset_utils as cdu
 import torch.utils.data
 import tifffile as tiff
 
-def load_tiff(tiff_file_path, datatype='np', verbose=0):
+def load_tiff(tiff_file_path, datatype='np', eo_data='sentinel2', verbose=0):
     '''Load tiff file as np or da'''
     if datatype == 'np':
-        return load_geotiff(tiff_file_path)
+        return load_geotiff(tiff_file_path, eo_data=eo_data)
     
     with rasterio.open(tiff_file_path) as f:
         if verbose > 0:
@@ -39,11 +39,16 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
             assert False, 'datatype should be np or da'
     return im 
 
-def load_geotiff(file):
+def load_geotiff(file, eo_data='sentinel2'):
     '''From SatBird: SatBird/src/dataset/utils.py'''
     img = tiff.imread(file)
-    new_band_order = [2, 1, 0, 3]  # r, g, b, nir
-    img = img[:, :, new_band_order].astype(float)
+    if eo_data == 'sentinel2':
+        new_band_order = [2, 1, 0, 3]  # r, g, b, nir
+        img = img[:, :, new_band_order].astype(float)
+    elif eo_data == 'alphaearth':
+        img = img.astype(float)
+    else:
+        assert False, f'Dataset name {eo_data} not implemented.'
     ## reshape to (bands, height, width)
     # img = np.reshape(img, (img.shape[2], img.shape[0], img.shape[1]))  ## original SatBird, but not correct?
     img = np.transpose(img, (2, 0, 1))
@@ -53,7 +58,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
     """Data set for image + presence/absence data. """
     def __init__(self, image_folder, presence_csv, shuffle_order_data=False,
                  species_process='all', n_bands=4, zscore_im=True,
-                 mode='train', use_testing_data=False,
+                 mode='train', use_testing_data=False, eo_data=None,
                  augment_image=True, verbose=1, dataset_name='s2bms',
                  return_indices=False):
         # super(DataSetImagePresence, self).__init__()
@@ -65,11 +70,20 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         self.use_testing_data = use_testing_data
         self.dataset_name = dataset_name
         self.return_indices = return_indices
+        self.eo_data = eo_data
         assert self.dataset_name in ['s2bms', 'satbird-kenya', 'satbird-usawinter', 'satbird-usasummer'], f'Dataset name {self.dataset_name} not implemented.'
         if self.zscore_im:
             if self.dataset_name == 's2bms':  ## Values obtained from full data set (1336 images)
-                self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
-                self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
+                if n_bands <= 4:  # assuming sentinels
+                    self.norm_means = np.array([661.1047,  770.6800,  531.8330, 3228.5588]).astype(np.float32) 
+                    self.norm_std = np.array([640.2482,  571.8545,  597.3570, 1200.7518]).astype(np.float32) 
+                    if eo_data is None:
+                        self.eo_data = 'sentinel2'
+                elif n_bands == 64: ## assuming alphaearth
+                    self.norm_means = np.load('/Users/tplas/repos/NeurEO/content/feature_means_pecl100-30km_v2.npy')
+                    self.norm_std = np.load('/Users/tplas/repos/NeurEO/content/feature_stds_pecl100-30km_v2.npy')
+                    if eo_data is None:
+                        self.eo_data = 'alphaearth'
             elif self.dataset_name == 'satbird-kenya':  ## From SatBird Kenya OLD data folder: stats/means_rgbnir.npy (and stds_)
                 self.norm_means = np.array([1905.25581818, 1700.55621907, 1554.70146535, 2432.34535847]).astype(np.float32) 
                 self.norm_std = np.array([1147.77209359,  777.33364953,  506.84587793, 1632.70761804]).astype(np.float32) 
@@ -79,11 +93,14 @@ class DataSetImagePresence(torch.utils.data.Dataset):
             elif self.dataset_name == 'satbird-usasummer':  ## From SatBird USA summer data folder: stats/means_rgbnir.npy (and stds_)
                 self.norm_means = np.array([1782.63124382, 1835.76085153, 1588.73908715, 3945.28647068]).astype(np.float32)
                 self.norm_std = np.array([ 805.13224798,  667.9370599 ,  643.96423834, 1304.8803265 ]).astype(np.float32)
+            assert len(self.norm_means) == n_bands, f'Length of norm_means {len(self.norm_means)} does not match n_bands {n_bands}.'
+            assert len(self.norm_std) == n_bands, f'Length of norm_std {len(self.norm_std)} does not match n_bands {n_bands}.'
             self.norm_means = self.norm_means[:, None, None]
             self.norm_std = self.norm_std[:, None, None]
         else:
             self.norm_means = None
             self.norm_std = None
+        assert self.eo_data is not None, 'eo_data must be specified if zscore_im is False.'
         if self.dataset_name == 's2bms':
             self.prefix_name_loc = 'UKBMS_'   ## '''Expected format of name_loc in presence csv: UKBMS_loc-xxxxx, in image folder: prefix_UKBMS_loc-xxxxx_suffix1_suffix2.tif.'''
             self.cols_not_species = ['tuple_coords', 'n_visits', 'name_loc']
@@ -105,7 +122,7 @@ class DataSetImagePresence(torch.utils.data.Dataset):
         locs_presence = [x.lstrip(self.prefix_name_loc) for x in df_presence['name_loc'].values]
 
         assert os.path.exists(self.image_folder), f"Image folder does not exist: {self.image_folder}"
-        content_image_folder = os.listdir(self.image_folder)
+        content_image_folder = [x for x in os.listdir(self.image_folder) if x.endswith('.tif')]
         if self.dataset_name == 's2bms':
             locs_images = [x.split('_')[2] for x in content_image_folder]
             suffix_images = np.unique(['_'.join(x.split('_')[3:]) for x in content_image_folder])
@@ -230,17 +247,20 @@ class DataSetImagePresence(torch.utils.data.Dataset):
     def load_image(self, name_loc):
         im_file_path = self.find_image_path(name_loc=name_loc)
         assert im_file_path is not None, f'Image file for location {name_loc} not found.'
-        im = load_tiff(im_file_path, datatype='np')
+        im = load_tiff(im_file_path, datatype='np', eo_data=self.eo_data)
         
-        if self.n_bands == 4:
-            pass 
-        elif self.n_bands == 3:
-            im = im[:3, :, :]
+        # if self.n_bands == 4 or self.n_bands == 64:
+        #     pass 
+        # elif self.n_bands == 3:
+        #     im = im[:3, :, :]
+        if self.n_bands <= im.shape[0]:
+            im = im[:self.n_bands, :, :]
         else:
             assert False, f'Number of bands {self.n_bands} not implemented.'
 
         if self.zscore_im:
-            im = im.astype(np.int32)
+            if self.eo_data == 'sentinel2':
+                im = im.astype(np.int32)
             im = self.zscore_image(im)
         else:
             # if self.n_bands == 4:

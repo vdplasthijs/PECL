@@ -35,7 +35,7 @@ sys.path.append(os.path.join(path_dict_pecl['repo'], 'content/'))
 # sys.path.append(os.path.join(path_dict_pecl['home'], 'repos/reproducible_figures/scripts/'))
 # import rep_fig_vis as rfv
 
-ONLINE_ACCESS_TO_GEE = False 
+ONLINE_ACCESS_TO_GEE = True 
 if ONLINE_ACCESS_TO_GEE:
     import api_keys
     import ee, geemap 
@@ -388,7 +388,9 @@ def plot_clusters_species_per_loc(df_summary, species_list, threshold_clusters=2
                      column='cluster', cmap='magma', categorical=True)
 
 def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0, 
-                  year=None, month_start_str='06', month_end_str='09'):
+                  col_polygon = 'polygon',
+                  year=None, month_start_str='06', month_end_str='09',
+                  image_collection='sentinel2'):
     assert ONLINE_ACCESS_TO_GEE, 'Need to set ONLINE_ACCESS_TO_GEE to True to use this function'
     assert type(df_mapping_locs_row) == pd.Series, type(df_mapping_locs_row)
     if year is None:
@@ -403,7 +405,6 @@ def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0,
         xy_coords = np.array(polygon.exterior.coords.xy).T 
         aoi = ee.Geometry.Polygon(xy_coords.tolist())
     else:
-        col_polygon = 'polygon'
         assert col_polygon in df_mapping_locs_row.index and 'tuple_coords' in df_mapping_locs_row.index, df_mapping_locs_row.index
         '''buffer around polygon, because (of CRS I think) the saved tif can be rotated slightly and therefore outside pixels are blank. 
         Create larger buffer and then in download_gee_image() it is loaded, indexed and re-saved to the correct size.'''
@@ -411,19 +412,31 @@ def get_gee_image(df_mapping_locs_row, use_point=True, verbose=0,
         xy_coords = np.array(df_mapping_locs_row[col_polygon].exterior.coords.xy).T 
         aoi = ee.Geometry.Polygon(xy_coords.tolist())
         aoi = aoi.buffer(buffer_dist).bounds()
+    if verbose:
+        print(f'Using {image_collection} for year {year}, months {month_start_str} to {month_end_str}')
+    if image_collection == 'sentinel2':
+        ex_collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
 
-    ex_collection = ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
+        ## also consider creating a mosaic instead: https://gis.stackexchange.com/questions/363163/filter-out-the-least-cloudy-images-in-sentinel-google-earth-engine
+        ex_im_gee = ee.Image(ex_collection 
+                            #   .project(crs='EPSG:27700', scale=1)
+                            .filterBounds(aoi) 
+                            .filterDate(ee.Date(f'{year}-{month_start_str}-01'), ee.Date(f'{year}-{month_end_str}-01')) 
+                            .select(['B4', 'B3', 'B2', 'B8'])  # 10m bands, RGB and NIR
+                            .sort('CLOUDY_PIXEL_PERCENTAGE')
+                            .first()  # get the least cloudy image
+                            .clip(aoi))
+    elif image_collection == 'alphaearth':
+        ex_collection = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
+        ex_im_gee = ee.Image(ex_collection 
+                            #   .project(crs='EPSG:27700', scale=1)
+                            .filterBounds(aoi) 
+                            .filterDate(ee.Date(f'{year}-01-01'), ee.Date(f'{year}-12-31')) 
+                            .first() 
+                            .clip(aoi))
+    else:
+        raise NotImplementedError(image_collection)
 
-    ## also consider creating a mosaic instead: https://gis.stackexchange.com/questions/363163/filter-out-the-least-cloudy-images-in-sentinel-google-earth-engine
-    ex_im_gee = ee.Image(ex_collection 
-                        #   .project(crs='EPSG:27700', scale=1)
-                        .filterBounds(aoi) 
-                        .filterDate(ee.Date(f'{year}-{month_start_str}-01'), ee.Date(f'{year}-{month_end_str}-01')) 
-                        .select(['B4', 'B3', 'B2', 'B8'])  # 10m bands, RGB and NIR
-                        .sort('CLOUDY_PIXEL_PERCENTAGE')
-                        .first()  # get the least cloudy image
-                        .clip(aoi))
-    
     im_dims = ex_im_gee.getInfo()["bands"][0]["dimensions"]
     
     if im_dims[0] < 256 or im_dims[1] < 256:
@@ -456,12 +469,14 @@ def load_tiff(tiff_file_path, datatype='np', verbose=0):
 
 def download_gee_image(df_mapping_locs_row, use_point=False, 
                         month_start_str='06', month_end_str='09',
+                        image_collection='sentinel2',
                        year=None, path_save=None, 
                        remove_if_too_small=True, verbose=0):
     assert ONLINE_ACCESS_TO_GEE, 'Need to set ONLINE_ACCESS_TO_GEE to True to use this function'
     if year is None:
-        year = 2020
+        year = 2024
     im_gee = get_gee_image(df_mapping_locs_row=df_mapping_locs_row, 
+                            image_collection=image_collection,
                            month_start_str=month_start_str, month_end_str=month_end_str,
                            use_point=use_point, verbose=verbose, year=year)
     if im_gee is None:  ## if image was too small it was discarded
@@ -474,16 +489,24 @@ def download_gee_image(df_mapping_locs_row, use_point=False,
     if not os.path.exists(path_save):
         os.makedirs(path_save)
 
-    filepath = os.path.join(path_save, f'sent2-4band_{name_loc}_y-{year}_m-{month_start_str}-{month_end_str}.tif')
+    if image_collection == 'sentinel2':
+        filename = f'sent2-4band_{name_loc}_y-{year}_m-{month_start_str}-{month_end_str}.tif'
+    elif image_collection == 'alphaearth':
+        filename = f'alphaearth_{name_loc}_y-{year}.tif'
+    filepath = os.path.join(path_save, filename)
+    # return im_gee
     geemap.ee_export_image(
         im_gee, filename=filepath, 
-        scale=10,  # 10m bands
+        scale=20,  # 10m bands
         file_per_band=False,# crs='EPSG:32630'
     )
 
     ## load & save to size correctly (because of buffer): 
     im = load_tiff(filepath, datatype='da')
-    desired_pixel_size = 256
+    if image_collection == 'sentinel2':
+        desired_pixel_size = 128  # for sentinel2
+    elif image_collection == 'alphaearth':
+        desired_pixel_size = 128
     
     if verbose:
         print('Original size: ', im.shape)
@@ -511,3 +534,5 @@ def create_timestamp(include_seconds=False):
         timestamp += ':' + str(dt.second).zfill(2)
     return timestamp
 
+if __name__ == "__main__":
+    print('This is a utility script for creating and processing the UKBMS dataset.')
